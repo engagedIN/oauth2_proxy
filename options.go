@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -212,6 +213,19 @@ func (o *Options) Validate() error {
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
 		http.DefaultClient = &http.Client{Transport: insecureTransport}
+	}
+
+	cert, err := tls.LoadX509KeyPair("./DEVAPP.FRESHTRI.COM.crt", "./devapp.freshtri.com.key")
+	if err != nil {
+		return errors.New("server: loadkeys: " + err.Error())
+	}
+	http.DefaultClient = &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				Certificates:       []tls.Certificate{cert},
+				InsecureSkipVerify: false,
+			},
+		},
 	}
 
 	msgs := make([]string, 0)
