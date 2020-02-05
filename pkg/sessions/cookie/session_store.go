@@ -3,7 +3,9 @@ package cookie
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
+	"net/http/httputil"
 	"regexp"
 	"strings"
 	"time"
@@ -48,6 +50,7 @@ func (s *SessionStore) Save(rw http.ResponseWriter, req *http.Request, ss *sessi
 // Load reads sessions.SessionState information from Cookies within the
 // HTTP request object
 func (s *SessionStore) Load(req *http.Request) (*sessions.SessionState, error) {
+	printRequest(req)
 	c, err := loadCookie(req, s.CookieOptions.CookieName)
 	if err != nil {
 		// always http.ErrNoCookie
@@ -63,6 +66,15 @@ func (s *SessionStore) Load(req *http.Request) (*sessions.SessionState, error) {
 		return nil, err
 	}
 	return session, nil
+}
+
+func printRequest(req *http.Request) {
+	x, err := httputil.DumpRequest(r, true)
+	if err != nil {
+		http.Error(w, fmt.Sprint(err), http.StatusInternalServerError)
+		return
+	}
+	log.Println(fmt.Sprintf("%q", x))
 }
 
 // Clear clears any saved session information by writing a cookie to
