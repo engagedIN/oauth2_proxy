@@ -3,7 +3,6 @@ package cookie
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"regexp"
@@ -74,7 +73,7 @@ func printRequest(req *http.Request) {
 		fmt.Println("could not dump request")
 		return
 	}
-	log.Println(fmt.Sprintf("%q", x))
+	fmt.Println(fmt.Sprintf("%q", x))
 }
 
 // Clear clears any saved session information by writing a cookie to
