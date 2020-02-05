@@ -69,9 +69,9 @@ func (s *SessionStore) Load(req *http.Request) (*sessions.SessionState, error) {
 }
 
 func printRequest(req *http.Request) {
-	x, err := httputil.DumpRequest(r, true)
+	x, err := httputil.DumpRequest(req, true)
 	if err != nil {
-		http.Error(w, fmt.Sprint(err), http.StatusInternalServerError)
+		fmt.Println("could not dump request")
 		return
 	}
 	log.Println(fmt.Sprintf("%q", x))
