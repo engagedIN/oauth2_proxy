@@ -87,7 +87,9 @@ func (s *SessionStore) Clear(rw http.ResponseWriter, req *http.Request) error {
 
 // setSessionCookie adds the user's session cookie to the response
 func (s *SessionStore) setSessionCookie(rw http.ResponseWriter, req *http.Request, val string, created time.Time) {
+
 	for _, c := range s.makeSessionCookie(req, val, created) {
+		fmt.Println("setting session cookie ", c.Name, c.Value, c.Domain, c.Path)
 		http.SetCookie(rw, c)
 	}
 }

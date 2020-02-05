@@ -29,6 +29,7 @@ func NewOIDCProvider(p *ProviderData) *OIDCProvider {
 
 // Redeem exchanges the OAuth2 authentication token for an ID token
 func (p *OIDCProvider) Redeem(redirectURL, code string) (s *sessions.SessionState, err error) {
+	fmt.Println("redeeming auth token for access token")
 	ctx := context.Background()
 	c := oauth2.Config{
 		ClientID:     p.ClientID,
@@ -38,6 +39,8 @@ func (p *OIDCProvider) Redeem(redirectURL, code string) (s *sessions.SessionStat
 		},
 		RedirectURL: redirectURL,
 	}
+	fmt.Println("redirect url: ", c.RedirectURL)
+	fmt.Println("redemption url: ", c.Endpoint.TokenURL)
 	token, err := c.Exchange(ctx, code)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange: %v", err)
@@ -173,7 +176,9 @@ func (p *OIDCProvider) ValidateSessionState(s *sessions.SessionState) bool {
 }
 
 func getOIDCHeader(accessToken string) http.Header {
+	fmt.Println("getting OIDC header")
 	header := make(http.Header)
+	fmt.Println("setting header values, bearer token: ", accessToken)
 	header.Set("Accept", "application/json")
 	header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
 	return header
