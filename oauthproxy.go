@@ -619,6 +619,7 @@ func getRemoteAddr(req *http.Request) (s string) {
 }
 
 func (p *OAuthProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - passing to handler for path: ", req.URL.Path)
 	switch path := req.URL.Path; {
 	case path == p.RobotsPath:
 		p.RobotsTxt(rw)
