@@ -375,6 +375,7 @@ func (p *OAuthProxy) makeCookie(req *http.Request, name string, value string, ex
 		}
 	}
 
+	fmt.Printf("oauthproxy.go - makeCOOKIE, name: %s, value: %s, path: %s, domain: %s", name, value, p.CookiePath, p.CookieDomain)
 	return &http.Cookie{
 		Name:     name,
 		Value:    value,
