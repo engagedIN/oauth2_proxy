@@ -628,16 +628,22 @@ func (p *OAuthProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	case p.IsWhitelistedRequest(req):
 		p.serveMux.ServeHTTP(rw, req)
 	case path == p.SignInPath:
+		logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - handling SignInPath: ", p.SignInPath)
 		p.SignIn(rw, req)
 	case path == p.SignOutPath:
+		logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - handling SignOutPath: ", p.SignOutPath)
 		p.SignOut(rw, req)
 	case path == p.OAuthStartPath:
+		logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - handling OAuthStartPath: ", p.OAuthStartPath)
 		p.OAuthStart(rw, req)
 	case path == p.OAuthCallbackPath:
+		logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - handling OAuthCallbackPath: ", p.OAuthCallbackPath)
 		p.OAuthCallback(rw, req)
 	case path == p.AuthOnlyPath:
+		logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - handling AuthOnlyPath: ", p.AuthOnlyPath)
 		p.AuthenticateOnly(rw, req)
 	case path == p.UserInfoPath:
+		logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - handling UserInfoPath: ", p.UserInfoPath)
 		p.UserInfo(rw, req)
 	default:
 		p.Proxy(rw, req)
