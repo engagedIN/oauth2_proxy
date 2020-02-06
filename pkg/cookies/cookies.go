@@ -39,6 +39,7 @@ func MakeCookie(req *http.Request, name string, value string, path string, domai
 // MakeCookieFromOptions constructs a cookie based on the given *options.CookieOptions,
 // value and creation time
 func MakeCookieFromOptions(req *http.Request, name string, value string, opts *options.CookieOptions, expiration time.Duration, now time.Time) *http.Cookie {
+	fmt.Printf("cookies.go - MAKE COOKIE FROM OPTIONS, name: %s, value: %s, path: %s, domain: %s", name, value, opts.CookiePath, opts.CookieDomain)
 	return MakeCookie(req, name, value, opts.CookiePath, opts.CookieDomain, opts.CookieHTTPOnly, opts.CookieSecure, expiration, now, ParseSameSite(opts.CookieSameSite))
 }
 

@@ -113,7 +113,7 @@ func (s *SessionStore) makeSessionCookie(req *http.Request, value string, now ti
 		value = encryption.SignedValue(s.CookieOptions.CookieSecret, s.CookieOptions.CookieName, value, now)
 	}
 	c := s.makeCookie(req, s.CookieOptions.CookieName, value, s.CookieOptions.CookieExpire, now)
-	fmt.Printf("MAKE SESSION COOKIE, name: %s, value: %s", s.CookieOptions.CookieName, value)
+	fmt.Printf("session_store.go - MAKE SESSION COOKIE, name: %s, value: %s", s.CookieOptions.CookieName, value)
 	if len(c.Value) > 4096-len(s.CookieOptions.CookieName) {
 		return splitCookie(c)
 	}
