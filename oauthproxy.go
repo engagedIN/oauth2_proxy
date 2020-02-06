@@ -277,11 +277,12 @@ func NewOAuthProxy(opts *Options, validator func(string) bool) *OAuthProxy {
 		CookieSameSite: opts.CookieSameSite,
 		Validator:      validator,
 
-		RobotsPath:        "/robots.txt",
-		PingPath:          opts.PingPath,
-		SignInPath:        fmt.Sprintf("%s/sign_in", opts.ProxyPrefix),
-		SignOutPath:       fmt.Sprintf("%s/sign_out", opts.ProxyPrefix),
-		OAuthStartPath:    fmt.Sprintf("%s/start", opts.ProxyPrefix),
+		RobotsPath:     "/robots.txt",
+		PingPath:       opts.PingPath,
+		SignInPath:     fmt.Sprintf("%s/sign_in", opts.ProxyPrefix),
+		SignOutPath:    fmt.Sprintf("%s/sign_out", opts.ProxyPrefix),
+		OAuthStartPath: fmt.Sprintf("%s/start", opts.ProxyPrefix),
+		//OAuthCallbackPath: fmt.Sprintf("%s/callback", opts.ProxyPrefix),
 		OAuthCallbackPath: fmt.Sprintf("%s/redirect_uri", opts.ProxyPrefix),
 		AuthOnlyPath:      fmt.Sprintf("%s/auth", opts.ProxyPrefix),
 		UserInfoPath:      fmt.Sprintf("%s/userinfo", opts.ProxyPrefix),
@@ -619,9 +620,10 @@ func getRemoteAddr(req *http.Request) (s string) {
 }
 
 func (p *OAuthProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - passing to handler for path: ", req.URL.Path)
+	logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - passing to handler for path: ", req.URL.String())
 	logger.Printf("[DEBUG] oauthproxy.go::ServeHTTP - registered paths, \nsignin: %s, \nauthstart: %s, \ncallback: %s\n", p.SignInPath, p.OAuthStartPath, p.OAuthCallbackPath)
-	switch path := req.URL.Path; {
+	//switch path := req.URL.Path; {
+	switch path := req.URL.String(); {
 	case path == p.RobotsPath:
 		p.RobotsTxt(rw)
 	case path == p.PingPath:
