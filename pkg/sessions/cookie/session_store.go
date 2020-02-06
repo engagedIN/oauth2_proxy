@@ -35,15 +35,19 @@ type SessionStore struct {
 // Save takes a sessions.SessionState and stores the information from it
 // within Cookies set on the HTTP response writer
 func (s *SessionStore) Save(rw http.ResponseWriter, req *http.Request, ss *sessions.SessionState) error {
+	fmt.Println("saving session")
 	printRequest(req)
 	if ss.CreatedAt.IsZero() {
 		ss.CreatedAt = time.Now()
 	}
 	value, err := utils.CookieForSession(ss, s.CookieCipher)
 	if err != nil {
+		fmt.Println("error in getting cookie value: ", err)
 		return err
 	}
+	fmt.Println("session value: ", value)
 	s.setSessionCookie(rw, req, value, ss.CreatedAt)
+
 	return nil
 }
 
