@@ -13,6 +13,7 @@ import (
 	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
 	"github.com/pusher/oauth2_proxy/pkg/cookies"
 	"github.com/pusher/oauth2_proxy/pkg/encryption"
+	"github.com/pusher/oauth2_proxy/pkg/logger"
 	"github.com/pusher/oauth2_proxy/pkg/sessions/utils"
 )
 
@@ -35,17 +36,17 @@ type SessionStore struct {
 // Save takes a sessions.SessionState and stores the information from it
 // within Cookies set on the HTTP response writer
 func (s *SessionStore) Save(rw http.ResponseWriter, req *http.Request, ss *sessions.SessionState) error {
-	fmt.Println("saving session")
+	logger.Println("saving session")
 	printRequest(req)
 	if ss.CreatedAt.IsZero() {
 		ss.CreatedAt = time.Now()
 	}
 	value, err := utils.CookieForSession(ss, s.CookieCipher)
 	if err != nil {
-		fmt.Println("error in getting cookie value: ", err)
+		logger.Println("error in getting cookie value: ", err)
 		return err
 	}
-	fmt.Println("session value: ", value)
+	logger.Println("session value: ", value)
 	s.setSessionCookie(rw, req, value, ss.CreatedAt)
 
 	return nil
@@ -75,10 +76,10 @@ func (s *SessionStore) Load(req *http.Request) (*sessions.SessionState, error) {
 func printRequest(req *http.Request) {
 	x, err := httputil.DumpRequest(req, true)
 	if err != nil {
-		fmt.Println("could not dump request")
+		logger.Println("could not dump request")
 		return
 	}
-	fmt.Println(fmt.Sprintf("PRINTING REQUEST: %q", x))
+	logger.Println(fmt.Sprintf("PRINTING REQUEST: %q", x))
 }
 
 // Clear clears any saved session information by writing a cookie to
@@ -105,7 +106,7 @@ func (s *SessionStore) Clear(rw http.ResponseWriter, req *http.Request) error {
 func (s *SessionStore) setSessionCookie(rw http.ResponseWriter, req *http.Request, val string, created time.Time) {
 
 	for _, c := range s.makeSessionCookie(req, val, created) {
-		fmt.Println("setting session cookie ", c.Name, c.Value, c.Domain, c.Path)
+		logger.Println("setting session cookie ", c.Name, c.Value, c.Domain, c.Path)
 		http.SetCookie(rw, c)
 	}
 }
@@ -117,7 +118,7 @@ func (s *SessionStore) makeSessionCookie(req *http.Request, value string, now ti
 		value = encryption.SignedValue(s.CookieOptions.CookieSecret, s.CookieOptions.CookieName, value, now)
 	}
 	c := s.makeCookie(req, s.CookieOptions.CookieName, value, s.CookieOptions.CookieExpire, now)
-	fmt.Printf("session_store.go - MAKE SESSION COOKIE, name: %s, value: %s", s.CookieOptions.CookieName, value)
+	logger.Printf("session_store.go - MAKE SESSION COOKIE, name: %s, value: %s", s.CookieOptions.CookieName, value)
 	if len(c.Value) > 4096-len(s.CookieOptions.CookieName) {
 		return splitCookie(c)
 	}

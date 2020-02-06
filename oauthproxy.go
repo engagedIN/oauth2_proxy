@@ -375,7 +375,7 @@ func (p *OAuthProxy) makeCookie(req *http.Request, name string, value string, ex
 		}
 	}
 
-	fmt.Printf("oauthproxy.go - makeCOOKIE, name: %s, value: %s, path: %s, domain: %s", name, value, p.CookiePath, p.CookieDomain)
+	logger.Printf("[DEBUG] oauthproxy.go::MakeCSRFCookie() name: %s, value: %s, path: %s, domain: %s", name, value, p.CookiePath, p.CookieDomain)
 	return &http.Cookie{
 		Name:     name,
 		Value:    value,
@@ -654,12 +654,14 @@ func (p *OAuthProxy) SignIn(rw http.ResponseWriter, req *http.Request) {
 
 	user, ok := p.ManualSignIn(rw, req)
 	if ok {
+		logger.Println("[DEBUG] oauthproxy.go::SignIn - Manual sign in started")
 		session := &sessionsapi.SessionState{User: user}
 		if err := p.SaveSession(rw, req, session); err != nil {
-			fmt.Println("ERROR SAVING SESSION: ", err)
+			logger.Println("oauthproxy.go::SignIn() - ERROR SAVING SESSION: ", err)
 		}
 		http.Redirect(rw, req, redirect, 302)
 	} else {
+		logger.Println("[DEBUG] oauthproxy.go::SignIn - loading sign in page")
 		if p.SkipProviderButton {
 			p.OAuthStart(rw, req)
 		} else {
@@ -698,12 +700,14 @@ func (p *OAuthProxy) SignOut(rw http.ResponseWriter, req *http.Request) {
 
 // OAuthStart starts the OAuth2 authentication flow
 func (p *OAuthProxy) OAuthStart(rw http.ResponseWriter, req *http.Request) {
+	logger.Println("[DEBUG] oauthproxy.go::OAuthStart - start oauth sign in")
 	nonce, err := encryption.Nonce()
 	if err != nil {
 		logger.Printf("Error obtaining nonce: %s", err.Error())
 		p.ErrorPage(rw, 500, "Internal Error", err.Error())
 		return
 	}
+	logger.Println("[DEBUG] oauthproxy.go::OAuthStart - setting CSRF cookie")
 	p.SetCSRFCookie(rw, req, nonce)
 	redirect, err := p.GetRedirect(req)
 	if err != nil {
@@ -712,12 +716,14 @@ func (p *OAuthProxy) OAuthStart(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	redirectURI := p.GetRedirectURI(req.Host)
+	logger.Printf("[DEBUG] oauthproxy.go::OAuthStart() - redirecting to login url: %s", p.provider.GetLoginURL(redirectURI, fmt.Sprintf("%v:%v", nonce, redirect)))
 	http.Redirect(rw, req, p.provider.GetLoginURL(redirectURI, fmt.Sprintf("%v:%v", nonce, redirect)), 302)
 }
 
 // OAuthCallback is the OAuth2 authentication flow callback that finishes the
 // OAuth2 authentication flow
 func (p *OAuthProxy) OAuthCallback(rw http.ResponseWriter, req *http.Request) {
+	logger.Println("[DEBUG] oauthproxy.go::OAuthCallback - processes OAuth callback")
 	remoteAddr := getRemoteAddr(req)
 
 	// finish the oauth cycle
@@ -767,6 +773,7 @@ func (p *OAuthProxy) OAuthCallback(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// set cookie, or deny
+	logger.Println("[DEBUG] oauthproxy.go::OAuthCallback - attempting to set cookie")
 	if p.Validator(session.Email) && p.provider.ValidateGroup(session.Email) {
 		logger.PrintAuthf(session.Email, req, logger.AuthSuccess, "Authenticated via OAuth2: %s", session)
 		err := p.SaveSession(rw, req, session)
