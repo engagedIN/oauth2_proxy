@@ -73,7 +73,7 @@ func printRequest(req *http.Request) {
 		fmt.Println("could not dump request")
 		return
 	}
-	fmt.Println(fmt.Sprintf("%q", x))
+	fmt.Println(fmt.Sprintf("PRINTING REQUEST: %q", x))
 }
 
 // Clear clears any saved session information by writing a cookie to
