@@ -620,6 +620,7 @@ func getRemoteAddr(req *http.Request) (s string) {
 
 func (p *OAuthProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - passing to handler for path: ", req.URL.Path)
+	logger.Printf("[DEBUG] oauthproxy.go::ServeHTTP - registered paths, \nsignin: %s, \nauthstart: %s, \ncallback: %s\n", p.SignInPath, p.OAuthStartPath, p.OAuthCallback)
 	switch path := req.URL.Path; {
 	case path == p.RobotsPath:
 		p.RobotsTxt(rw)
@@ -646,6 +647,7 @@ func (p *OAuthProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - handling UserInfoPath: ", p.UserInfoPath)
 		p.UserInfo(rw, req)
 	default:
+		logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - no path match, using default proxy")
 		p.Proxy(rw, req)
 	}
 }
@@ -813,6 +815,7 @@ func (p *OAuthProxy) AuthenticateOnly(rw http.ResponseWriter, req *http.Request)
 // them to authenticate
 func (p *OAuthProxy) Proxy(rw http.ResponseWriter, req *http.Request) {
 	session, err := p.getAuthenticatedSession(rw, req)
+	logger.Println("[DEBUG] oauthproxy.go::Proxy - error: ", err)
 	switch err {
 	case nil:
 		// we are authenticated
@@ -828,8 +831,10 @@ func (p *OAuthProxy) Proxy(rw http.ResponseWriter, req *http.Request) {
 		}
 
 		if p.SkipProviderButton {
+			logger.Println("[DEBUG] oauthproxy.go::Proxy - redirecting to OAuthStart")
 			p.OAuthStart(rw, req)
 		} else {
+			logger.Println("[DEBUG] oauthproxy.go::Proxy - redirecting to SignInPage")
 			p.SignInPage(rw, req, http.StatusForbidden)
 		}
 
