@@ -642,7 +642,7 @@ func (p *OAuthProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - handling OAuthStartPath: ", p.OAuthStartPath)
 		p.OAuthStart(rw, req)
 	//case path == p.OAuthCallbackPath:
-	case strings.Contains(path, p.OAuthCallbackPath):
+	case strings.Contains(path, "redirect_uri"):
 		logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - handling OAuthCallbackPath: ", p.OAuthCallbackPath)
 		p.OAuthCallback(rw, req)
 	case path == p.AuthOnlyPath:
