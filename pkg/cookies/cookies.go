@@ -24,6 +24,8 @@ func MakeCookie(req *http.Request, name string, value string, path string, domai
 		}
 	}
 
+	fmt.Printf("cookies.go - MAKE COOKIE, name: %s, value: %s, path: %s, domain: %s", name, value, path, domain)
+
 	return &http.Cookie{
 		Name:     name,
 		Value:    value,
