@@ -620,10 +620,12 @@ func getRemoteAddr(req *http.Request) (s string) {
 }
 
 func (p *OAuthProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - passing to handler for path: ", req.URL.String())
+	//logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - passing to handler for path: ", req.URL.String())
 	logger.Printf("[DEBUG] oauthproxy.go::ServeHTTP - registered paths, \nsignin: %s, \nauthstart: %s, \ncallback: %s\n", p.SignInPath, p.OAuthStartPath, p.OAuthCallbackPath)
 	//switch path := req.URL.Path; {
-	switch path := req.URL.String(); {
+	urlPart := fmt.Sprintf("%s%s", p.ProxyPrefix, req.URL.Path)
+	logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - attempting to match: ", urlPart)
+	switch path := urlPart; {
 	case path == p.RobotsPath:
 		p.RobotsTxt(rw)
 	case path == p.PingPath:
