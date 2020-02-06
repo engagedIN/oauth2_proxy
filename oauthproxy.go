@@ -282,7 +282,7 @@ func NewOAuthProxy(opts *Options, validator func(string) bool) *OAuthProxy {
 		SignInPath:        fmt.Sprintf("%s/sign_in", opts.ProxyPrefix),
 		SignOutPath:       fmt.Sprintf("%s/sign_out", opts.ProxyPrefix),
 		OAuthStartPath:    fmt.Sprintf("%s/start", opts.ProxyPrefix),
-		OAuthCallbackPath: fmt.Sprintf("%s/callback", opts.ProxyPrefix),
+		OAuthCallbackPath: fmt.Sprintf("%s/redirect_uri", opts.ProxyPrefix),
 		AuthOnlyPath:      fmt.Sprintf("%s/auth", opts.ProxyPrefix),
 		UserInfoPath:      fmt.Sprintf("%s/userinfo", opts.ProxyPrefix),
 
