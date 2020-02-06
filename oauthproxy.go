@@ -655,7 +655,9 @@ func (p *OAuthProxy) SignIn(rw http.ResponseWriter, req *http.Request) {
 	user, ok := p.ManualSignIn(rw, req)
 	if ok {
 		session := &sessionsapi.SessionState{User: user}
-		p.SaveSession(rw, req, session)
+		if err := p.SaveSession(rw, req, session); err != nil {
+			fmt.Println("ERROR SAVING SESSION: ", err)
+		}
 		http.Redirect(rw, req, redirect, 302)
 	} else {
 		if p.SkipProviderButton {
