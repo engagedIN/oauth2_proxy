@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pusher/oauth2_proxy/pkg/encryption"
+	"github.com/pusher/oauth2_proxy/pkg/logger"
 )
 
 // SessionState is used to store information about the currently authenticated user session
@@ -76,24 +77,28 @@ func (s *SessionState) EncodeSessionState(c *encryption.Cipher) (string, error) 
 		ss = *s
 		var err error
 		if ss.Email != "" {
+			logger.Println("[DEBUG] session_state.go::EncodeSessionState: access token: ", ss.Email)
 			ss.Email, err = c.Encrypt(ss.Email)
 			if err != nil {
 				return "", err
 			}
 		}
 		if ss.User != "" {
+			logger.Println("[DEBUG] session_state.go::EncodeSessionState: access token: ", ss.User)
 			ss.User, err = c.Encrypt(ss.User)
 			if err != nil {
 				return "", err
 			}
 		}
 		if ss.AccessToken != "" {
+			logger.Println("[DEBUG] session_state.go::EncodeSessionState: access token: ", ss.AccessToken)
 			ss.AccessToken, err = c.Encrypt(ss.AccessToken)
 			if err != nil {
 				return "", err
 			}
 		}
 		if ss.IDToken != "" {
+			logger.Println("[DEBUG] session_state.go::EncodeSessionState: access token: ", ss.IDToken)
 			ss.IDToken, err = c.Encrypt(ss.IDToken)
 			if err != nil {
 				return "", err
