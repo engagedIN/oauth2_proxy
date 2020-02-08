@@ -352,6 +352,7 @@ func (o *Options) Validate() error {
 				len(secretBytes(o.CookieSecret)), suffix))
 		} else {
 			var err error
+			logger.Println("[DEBUG] options.go::Validate() - cookie secret: ", o.CookieSecret)
 			cipher, err = encryption.NewCipher(secretBytes(o.CookieSecret))
 			if err != nil {
 				msgs = append(msgs, fmt.Sprintf("cookie-secret error: %v", err))
