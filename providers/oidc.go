@@ -225,29 +225,8 @@ func findClaimsFromIDToken(idToken *oidc.IDToken, accessToken string, profileURL
 	return claims, nil
 }
 
-<<<<<<< HEAD
-// ValidateSessionState checks that the session's IDToken is still valid
-func (p *OIDCProvider) ValidateSessionState(s *sessions.SessionState) bool {
-	ctx := context.Background()
-	_, err := p.Verifier.Verify(ctx, s.IDToken)
-	if err != nil {
-		return false
-	}
-
-	return true
-}
-
-func getOIDCHeader(accessToken string) http.Header {
-	fmt.Println("getting OIDC header")
-	header := make(http.Header)
-	fmt.Println("setting header values, bearer token: ", accessToken)
-	header.Set("Accept", "application/json")
-	header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
-	return header
-=======
 type OIDCClaims struct {
 	Subject  string `json:"sub"`
 	Email    string `json:"email"`
 	Verified *bool  `json:"email_verified"`
->>>>>>> master
 }
