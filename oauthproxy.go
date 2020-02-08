@@ -277,13 +277,12 @@ func NewOAuthProxy(opts *Options, validator func(string) bool) *OAuthProxy {
 		CookieSameSite: opts.CookieSameSite,
 		Validator:      validator,
 
-		RobotsPath:     "/robots.txt",
-		PingPath:       opts.PingPath,
-		SignInPath:     fmt.Sprintf("%s/sign_in", opts.ProxyPrefix),
-		SignOutPath:    fmt.Sprintf("%s/sign_out", opts.ProxyPrefix),
-		OAuthStartPath: fmt.Sprintf("%s/start", opts.ProxyPrefix),
-		//OAuthCallbackPath: fmt.Sprintf("%s/callback", opts.ProxyPrefix),
-		OAuthCallbackPath: fmt.Sprintf("%s/redirect_uri", opts.ProxyPrefix),
+		RobotsPath:        "/robots.txt",
+		PingPath:          opts.PingPath,
+		SignInPath:        fmt.Sprintf("%s/sign_in", opts.ProxyPrefix),
+		SignOutPath:       fmt.Sprintf("%s/sign_out", opts.ProxyPrefix),
+		OAuthStartPath:    fmt.Sprintf("%s/start", opts.ProxyPrefix),
+		OAuthCallbackPath: fmt.Sprintf("%s/callback", opts.ProxyPrefix),
 		AuthOnlyPath:      fmt.Sprintf("%s/auth", opts.ProxyPrefix),
 		UserInfoPath:      fmt.Sprintf("%s/userinfo", opts.ProxyPrefix),
 
@@ -623,9 +622,6 @@ func (p *OAuthProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - passing to handler for url: ", req.URL.String())
 	logger.Printf("[DEBUG] oauthproxy.go::ServeHTTP - registered paths, \nsignin: %s, \nauthstart: %s, \ncallback: %s\n", p.SignInPath, p.OAuthStartPath, p.OAuthCallbackPath)
 	switch path := req.URL.Path; {
-	//urlPart := fmt.Sprintf("%s%s", p.ProxyPrefix, req.URL.Path)
-	//logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - attempting to match: ", urlPart)
-	//switch path := urlPart; {
 	case path == p.RobotsPath:
 		p.RobotsTxt(rw)
 	case path == p.PingPath:
@@ -641,8 +637,7 @@ func (p *OAuthProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	case path == p.OAuthStartPath:
 		logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - handling OAuthStartPath: ", p.OAuthStartPath)
 		p.OAuthStart(rw, req)
-	//case path == p.OAuthCallbackPath:
-	case strings.Contains(path, "redirect_uri"):
+	case path == p.OAuthCallbackPath:
 		logger.Println("[DEBUG] oauthproxy.go::ServeHTTP - handling OAuthCallbackPath: ", p.OAuthCallbackPath)
 		p.OAuthCallback(rw, req)
 	case path == p.AuthOnlyPath:
