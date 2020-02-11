@@ -169,7 +169,7 @@ func main() {
 	oauthproxy := NewOAuthProxy(opts, validator)
 
 	optsOutput, _ := json.MarshalIndent(opts, "", "\t")
-	logger.Println(optsOutput)
+	logger.Println(string(optsOutput))
 
 	if len(opts.Banner) >= 1 {
 		if opts.Banner == "-" {
