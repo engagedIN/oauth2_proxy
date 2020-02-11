@@ -168,8 +168,8 @@ func main() {
 	validator := NewValidator(opts.EmailDomains, opts.AuthenticatedEmailsFile)
 	oauthproxy := NewOAuthProxy(opts, validator)
 
-	s, _ := json.MarshalIndent(opts, "", "\t")
-	logger.Println(s)
+	optsOutput, _ := json.MarshalIndent(opts, "", "\t")
+	logger.Println(optsOutput)
 
 	if len(opts.Banner) >= 1 {
 		if opts.Banner == "-" {
