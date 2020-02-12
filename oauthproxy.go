@@ -778,7 +778,8 @@ func (p *OAuthProxy) OAuthCallback(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	logger.Println("[DEBUG] oauthproxy.go::OAuthCallback - redirect: ", redirect)
+	redirect = "freshtri://auth/sso/success"
+	logger.Println("[DEBUG] oauthproxy.go::OAuthCallback - statically setting redirect: ", redirect)
 	if !p.IsValidRedirect(redirect) {
 		redirect = "/"
 	}
