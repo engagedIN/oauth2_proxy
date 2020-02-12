@@ -48,7 +48,7 @@ func (p *OIDCProvider) Redeem(redirectURL, code string) (s *sessions.SessionStat
 
 	cert, err := tls.LoadX509KeyPair("./DEVAPP.FRESHTRI.COM.crt", "./devapp.freshtri.com.key")
 	if err != nil {
-		return errors.New("server: loadkeys: " + err.Error())
+		return nil, errors.New("server: loadkeys: " + err.Error())
 	}
 	httpsClient := &http.Client{
 		Transport: &http.Transport{
