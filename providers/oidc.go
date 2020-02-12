@@ -2,6 +2,8 @@ package providers
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -9,6 +11,7 @@ import (
 
 	oidc "github.com/coreos/go-oidc"
 	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
+	"github.com/pusher/oauth2_proxy/pkg/logger"
 	"github.com/pusher/oauth2_proxy/pkg/requests"
 
 	"golang.org/x/oauth2"
@@ -30,7 +33,7 @@ func NewOIDCProvider(p *ProviderData) *OIDCProvider {
 
 // Redeem exchanges the OAuth2 authentication token for an ID token
 func (p *OIDCProvider) Redeem(redirectURL, code string) (s *sessions.SessionState, err error) {
-	fmt.Println("redeeming auth token for access token")
+	logger.Println("redeeming auth token for access token")
 	ctx := context.Background()
 	c := oauth2.Config{
 		ClientID:     p.ClientID,
@@ -40,8 +43,24 @@ func (p *OIDCProvider) Redeem(redirectURL, code string) (s *sessions.SessionStat
 		},
 		RedirectURL: redirectURL,
 	}
-	fmt.Println("redirect url: ", c.RedirectURL)
-	fmt.Println("redemption url: ", c.Endpoint.TokenURL)
+	logger.Println("redirect url: ", c.RedirectURL)
+	logger.Println("redemption url: ", c.Endpoint.TokenURL)
+
+	cert, err := tls.LoadX509KeyPair("./DEVAPP.FRESHTRI.COM.crt", "./devapp.freshtri.com.key")
+	if err != nil {
+		return errors.New("server: loadkeys: " + err.Error())
+	}
+	httpsClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				Certificates:       []tls.Certificate{cert},
+				InsecureSkipVerify: false,
+			},
+		},
+	}
+
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
+
 	token, err := c.Exchange(ctx, code)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange: %v", err)
