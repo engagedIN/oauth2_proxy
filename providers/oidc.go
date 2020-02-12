@@ -2,6 +2,8 @@ package providers
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -39,6 +41,22 @@ func (p *OIDCProvider) Redeem(redirectURL, code string) (s *sessions.SessionStat
 		},
 		RedirectURL: redirectURL,
 	}
+
+	cert, err := tls.LoadX509KeyPair("./DEVAPP.FRESHTRI.COM.crt", "./devapp.freshtri.com.key")
+	if err != nil {
+		return errors.New("server: loadkeys: " + err.Error())
+	}
+	httpsClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				Certificates:       []tls.Certificate{cert},
+				InsecureSkipVerify: false,
+			},
+		},
+	}
+
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
+
 	token, err := c.Exchange(ctx, code)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange: %v", err)
