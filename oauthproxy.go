@@ -277,12 +277,14 @@ func NewOAuthProxy(opts *Options, validator func(string) bool) *OAuthProxy {
 		CookieSameSite: opts.CookieSameSite,
 		Validator:      validator,
 
-		RobotsPath:        "/robots.txt",
-		PingPath:          opts.PingPath,
-		SignInPath:        fmt.Sprintf("%s/sign_in", opts.ProxyPrefix),
-		SignOutPath:       fmt.Sprintf("%s/sign_out", opts.ProxyPrefix),
-		OAuthStartPath:    fmt.Sprintf("%s/start", opts.ProxyPrefix),
-		OAuthCallbackPath: fmt.Sprintf("%s/callback", opts.ProxyPrefix),
+		RobotsPath:     "/robots.txt",
+		PingPath:       opts.PingPath,
+		SignInPath:     fmt.Sprintf("%s/sign_in", opts.ProxyPrefix),
+		SignOutPath:    fmt.Sprintf("%s/sign_out", opts.ProxyPrefix),
+		OAuthStartPath: fmt.Sprintf("%s/start", opts.ProxyPrefix),
+		//OAuthCallbackPath: fmt.Sprintf("%s/callback", opts.ProxyPrefix),
+		// TODO (bjg):  change this to a config option - should not be hard coded unless it's required by a standard like OIDC
+		OAuthCallbackPath: fmt.Sprintf("%s/redirect_uri", opts.ProxyPrefix),
 		AuthOnlyPath:      fmt.Sprintf("%s/auth", opts.ProxyPrefix),
 		UserInfoPath:      fmt.Sprintf("%s/userinfo", opts.ProxyPrefix),
 

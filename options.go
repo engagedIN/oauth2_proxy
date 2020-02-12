@@ -215,6 +215,7 @@ func (o *Options) Validate() error {
 		http.DefaultClient = &http.Client{Transport: insecureTransport}
 	}
 
+	// TODO (bjg):  file paths should be done with options.  enable/disable client cert auth should also be an option
 	cert, err := tls.LoadX509KeyPair("./DEVAPP.FRESHTRI.COM.crt", "./devapp.freshtri.com.key")
 	if err != nil {
 		return errors.New("server: loadkeys: " + err.Error())
