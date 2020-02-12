@@ -778,6 +778,7 @@ func (p *OAuthProxy) OAuthCallback(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	logger.Println("[DEBUG] oauthproxy.go::OAuthCallback - redirect: ", redirect)
 	if !p.IsValidRedirect(redirect) {
 		redirect = "/"
 	}
@@ -792,6 +793,7 @@ func (p *OAuthProxy) OAuthCallback(rw http.ResponseWriter, req *http.Request) {
 			p.ErrorPage(rw, 500, "Internal Error", "Internal Error")
 			return
 		}
+		logger.Printf("[DEBUG] oauthproxy.go::OAuthCallback - redirecting to %s with HTTP response code 302", redirect)
 		http.Redirect(rw, req, redirect, 302)
 	} else {
 		logger.PrintAuthf(session.Email, req, logger.AuthFailure, "Invalid authentication via OAuth2: unauthorized")
