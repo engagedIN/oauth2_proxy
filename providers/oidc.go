@@ -50,7 +50,8 @@ func (p *OIDCProvider) Redeem(redirectURL, code string) (s *sessions.SessionStat
 	if err != nil {
 		return nil, errors.New("server: loadkeys: " + err.Error())
 	}
-	httpsClient := &http.Client{
+
+	httpClient := &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
 				Certificates:       []tls.Certificate{cert},
