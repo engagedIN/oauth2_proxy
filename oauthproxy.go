@@ -780,9 +780,9 @@ func (p *OAuthProxy) OAuthCallback(rw http.ResponseWriter, req *http.Request) {
 
 	redirect = "freshtri://auth/sso/success"
 	logger.Println("[DEBUG] oauthproxy.go::OAuthCallback - statically setting redirect: ", redirect)
-	if !p.IsValidRedirect(redirect) {
-		redirect = "/"
-	}
+	// if !p.IsValidRedirect(redirect) {
+	// 	redirect = "/"
+	// }
 
 	// set cookie, or deny
 	logger.Println("[DEBUG] oauthproxy.go::OAuthCallback - attempting to set cookie")
