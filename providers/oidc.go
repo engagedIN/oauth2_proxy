@@ -36,15 +36,15 @@ func (p *OIDCProvider) Redeem(redirectURL, code string) (s *sessions.SessionStat
 	logger.Println("redeeming auth token for access token")
 	ctx := context.Background()
 	c := oauth2.Config{
-		ClientID:     p.ClientID,
-		ClientSecret: p.ClientSecret,
+		ClientID: p.ClientID,
+		//ClientSecret: p.ClientSecret,
 		Endpoint: oauth2.Endpoint{
 			TokenURL: p.RedeemURL.String(),
 		},
 		RedirectURL: redirectURL,
 	}
-	logger.Println("redirect url: ", c.RedirectURL)
-	logger.Println("redemption url: ", c.Endpoint.TokenURL)
+	logger.Printf("redirect url: %s", c.RedirectURL)
+	logger.Printf("redemption url: %s", c.Endpoint.TokenURL)
 
 	cert, err := tls.LoadX509KeyPair("./DEVAPP.FRESHTRI.COM.crt", "./devapp.freshtri.com.key")
 	if err != nil {
