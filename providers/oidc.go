@@ -152,6 +152,7 @@ func (p *OIDCProvider) findVerifiedIDToken(ctx context.Context, token *oauth2.To
 	}
 
 	if rawIDToken, present := getIDToken(); present {
+		// TODO (bjg): disabled to test
 		verifiedIdToken, err := p.Verifier.Verify(ctx, rawIDToken)
 		return verifiedIdToken, err
 	} else {
@@ -233,10 +234,14 @@ func findClaimsFromIDToken(idToken *oidc.IDToken, accessToken string, profileURL
 		if err != nil {
 			return nil, err
 		}
-
+		// TODO (bjg):  modified to allow for "mail" string from AD
 		email, err := respJSON.Get("email").String()
 		if err != nil {
-			return nil, fmt.Errorf("neither id_token nor userinfo endpoint contained an email")
+			logger.Println("neither id_token nor userinfo endpoint contained an email, checking for mail field from AD")
+			email, err = respJSON.Get("mail").String()
+			if err != nil {
+				return nil, fmt.Errorf("neither id_token nor userinfo endpoint contained an email")
+			}
 		}
 
 		claims.Email = email
