@@ -1,12 +1,11 @@
 package providers
 
 import (
+	"context"
 	"fmt"
-	"net/http"
 
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
-	"github.com/pusher/oauth2_proxy/pkg/logger"
-	"github.com/pusher/oauth2_proxy/pkg/requests"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/sessions"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/requests"
 )
 
 // NextcloudProvider represents an Nextcloud based Identity Provider
@@ -14,32 +13,27 @@ type NextcloudProvider struct {
 	*ProviderData
 }
 
+var _ Provider = (*NextcloudProvider)(nil)
+
+const nextCloudProviderName = "Nextcloud"
+
 // NewNextcloudProvider initiates a new NextcloudProvider
 func NewNextcloudProvider(p *ProviderData) *NextcloudProvider {
-	p.ProviderName = "Nextcloud"
+	p.ProviderName = nextCloudProviderName
 	return &NextcloudProvider{ProviderData: p}
 }
 
-func getNextcloudHeader(accessToken string) http.Header {
-	header := make(http.Header)
-	header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
-	return header
-}
-
 // GetEmailAddress returns the Account email address
-func (p *NextcloudProvider) GetEmailAddress(s *sessions.SessionState) (string, error) {
-	req, err := http.NewRequest("GET",
-		p.ValidateURL.String(), nil)
+func (p *NextcloudProvider) GetEmailAddress(ctx context.Context, s *sessions.SessionState) (string, error) {
+	json, err := requests.New(p.ValidateURL.String()).
+		WithContext(ctx).
+		WithHeaders(makeOIDCHeader(s.AccessToken)).
+		Do().
+		UnmarshalJSON()
 	if err != nil {
-		logger.Printf("failed building request %s", err)
-		return "", err
+		return "", fmt.Errorf("error making request: %v", err)
 	}
-	req.Header = getNextcloudHeader(s.AccessToken)
-	json, err := requests.Request(req)
-	if err != nil {
-		logger.Printf("failed making request %s", err)
-		return "", err
-	}
+
 	email, err := json.Get("ocs").Get("data").Get("email").String()
 	return email, err
 }

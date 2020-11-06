@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/pusher/oauth2_proxy/pkg/logger"
-	fsnotify "gopkg.in/fsnotify/fsnotify.v1"
+	"github.com/fsnotify/fsnotify"
+
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/logger"
 )
 
 // WaitForReplacement waits for a file to exist on disk and then starts a watch
@@ -40,10 +41,15 @@ func WatchForUpdates(filename string, done <-chan bool, action func()) {
 		logger.Fatal("failed to create watcher for ", filename, ": ", err)
 	}
 	go func() {
-		defer watcher.Close()
+		defer func(w *fsnotify.Watcher) {
+			cerr := w.Close()
+			if cerr != nil {
+				logger.Fatalf("error closing watcher: %v", err)
+			}
+		}(watcher)
 		for {
 			select {
-			case _ = <-done:
+			case <-done:
 				logger.Printf("Shutting down watcher for: %s", filename)
 				return
 			case event := <-watcher.Events:
@@ -54,13 +60,16 @@ func WatchForUpdates(filename string, done <-chan bool, action func()) {
 				// can't be opened.
 				if event.Op&(fsnotify.Remove|fsnotify.Rename|fsnotify.Chmod) != 0 {
 					logger.Printf("watching interrupted on event: %s", event)
-					watcher.Remove(filename)
+					err = watcher.Remove(filename)
+					if err != nil {
+						logger.Printf("error removing watcher on %s: %v", filename, err)
+					}
 					WaitForReplacement(filename, event.Op, watcher)
 				}
 				logger.Printf("reloading after event: %s", event)
 				action()
 			case err = <-watcher.Errors:
-				logger.Printf("error watching %s: %s", filename, err)
+				logger.Errorf("error watching %s: %s", filename, err)
 			}
 		}
 	}()

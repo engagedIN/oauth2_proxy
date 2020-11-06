@@ -8,19 +8,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"golang.org/x/oauth2"
-
-	"github.com/bmizerany/assert"
-	"github.com/coreos/go-oidc"
-	"github.com/dgrijalva/jwt-go"
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
-
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/coreos/go-oidc"
+	"github.com/dgrijalva/jwt-go"
+	"github.com/stretchr/testify/assert"
+	"golang.org/x/oauth2"
+
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/sessions"
 )
 
 const accessToken = "access_token"
@@ -29,9 +29,12 @@ const clientID = "https://test.myapp.com"
 const secret = "secret"
 
 type idTokenClaims struct {
-	Name    string `json:"name,omitempty"`
-	Email   string `json:"email,omitempty"`
-	Picture string `json:"picture,omitempty"`
+	Name        string      `json:"name,omitempty"`
+	Email       string      `json:"email,omitempty"`
+	Phone       string      `json:"phone_number,omitempty"`
+	Picture     string      `json:"picture,omitempty"`
+	Groups      interface{} `json:"groups,omitempty"`
+	OtherGroups interface{} `json:"other_groups,omitempty"`
 	jwt.StandardClaims
 }
 
@@ -46,7 +49,10 @@ type redeemTokenResponse struct {
 var defaultIDToken idTokenClaims = idTokenClaims{
 	"Jane Dobbs",
 	"janed@me.com",
+	"+4798765432",
 	"http://mugbook.com/janed/me.jpg",
+	[]string{"test:a", "test:b"},
+	[]string{"test:c", "test:d"},
 	jwt.StandardClaims{
 		Audience:  "https://test.myapp.com",
 		ExpiresAt: time.Now().Add(time.Duration(5) * time.Minute).Unix(),
@@ -58,10 +64,54 @@ var defaultIDToken idTokenClaims = idTokenClaims{
 	},
 }
 
-type fakeKeySetStub struct {}
+var customGroupClaimIDToken idTokenClaims = idTokenClaims{
+	"Jane Dobbs",
+	"janed@me.com",
+	"+4798765432",
+	"http://mugbook.com/janed/me.jpg",
+	[]map[string]interface{}{
+		{
+			"groupId": "Admin Group Id",
+			"roles":   []string{"Admin"},
+		},
+	},
+	[]string{"test:c", "test:d"},
+	jwt.StandardClaims{
+		Audience:  "https://test.myapp.com",
+		ExpiresAt: time.Now().Add(time.Duration(5) * time.Minute).Unix(),
+		Id:        "id-some-id",
+		IssuedAt:  time.Now().Unix(),
+		Issuer:    "https://issuer.example.com",
+		NotBefore: 0,
+		Subject:   "123456789",
+	},
+}
+
+var minimalIDToken idTokenClaims = idTokenClaims{
+	"",
+	"",
+	"",
+	"",
+	[]string{},
+	[]string{},
+	jwt.StandardClaims{
+		Audience:  "https://test.myapp.com",
+		ExpiresAt: time.Now().Add(time.Duration(5) * time.Minute).Unix(),
+		Id:        "id-some-id",
+		IssuedAt:  time.Now().Unix(),
+		Issuer:    "https://issuer.example.com",
+		NotBefore: 0,
+		Subject:   "minimal",
+	},
+}
+
+type fakeKeySetStub struct{}
 
 func (fakeKeySetStub) VerifySignature(_ context.Context, jwt string) (payload []byte, err error) {
 	decodeString, err := base64.RawURLEncoding.DecodeString(strings.Split(jwt, ".")[1])
+	if err != nil {
+		return nil, err
+	}
 	tokenClaims := &idTokenClaims{}
 	err = json.Unmarshal(decodeString, tokenClaims)
 
@@ -98,11 +148,12 @@ func newOIDCProvider(serverURL *url.URL) *OIDCProvider {
 
 	p := &OIDCProvider{
 		ProviderData: providerData,
-		Verifier:     oidc.NewVerifier(
+		Verifier: oidc.NewVerifier(
 			"https://issuer.example.com",
 			fakeKeySetStub{},
 			&oidc.Config{ClientID: clientID},
 		),
+		UserIDClaim: "email",
 	}
 
 	return p
@@ -118,7 +169,6 @@ func newOIDCServer(body []byte) (*url.URL, *httptest.Server) {
 }
 
 func newSignedTestIDToken(tokenClaims idTokenClaims) (string, error) {
-
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	standardClaims := jwt.NewWithClaims(jwt.SigningMethodRS256, tokenClaims)
 	return standardClaims.SignedString(key)
@@ -153,13 +203,33 @@ func TestOIDCProviderRedeem(t *testing.T) {
 	server, provider := newTestSetup(body)
 	defer server.Close()
 
-	session, err := provider.Redeem(provider.RedeemURL.String(), "code1234")
+	session, err := provider.Redeem(context.Background(), provider.RedeemURL.String(), "code1234")
 	assert.Equal(t, nil, err)
 	assert.Equal(t, defaultIDToken.Email, session.Email)
 	assert.Equal(t, accessToken, session.AccessToken)
 	assert.Equal(t, idToken, session.IDToken)
 	assert.Equal(t, refreshToken, session.RefreshToken)
 	assert.Equal(t, "123456789", session.User)
+}
+
+func TestOIDCProviderRedeem_custom_userid(t *testing.T) {
+
+	idToken, _ := newSignedTestIDToken(defaultIDToken)
+	body, _ := json.Marshal(redeemTokenResponse{
+		AccessToken:  accessToken,
+		ExpiresIn:    10,
+		TokenType:    "Bearer",
+		RefreshToken: refreshToken,
+		IDToken:      idToken,
+	})
+
+	server, provider := newTestSetup(body)
+	provider.UserIDClaim = "phone_number"
+	defer server.Close()
+
+	session, err := provider.Redeem(context.Background(), provider.RedeemURL.String(), "code1234")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, defaultIDToken.Phone, session.Email)
 }
 
 func TestOIDCProviderRefreshSessionIfNeededWithoutIdToken(t *testing.T) {
@@ -178,14 +248,14 @@ func TestOIDCProviderRefreshSessionIfNeededWithoutIdToken(t *testing.T) {
 	existingSession := &sessions.SessionState{
 		AccessToken:  "changeit",
 		IDToken:      idToken,
-		CreatedAt:    time.Time{},
-		ExpiresOn:    time.Time{},
+		CreatedAt:    nil,
+		ExpiresOn:    nil,
 		RefreshToken: refreshToken,
 		Email:        "janedoe@example.com",
 		User:         "11223344",
 	}
 
-	refreshed, err := provider.RefreshSessionIfNeeded(existingSession)
+	refreshed, err := provider.RefreshSessionIfNeeded(context.Background(), existingSession)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, refreshed, true)
 	assert.Equal(t, "janedoe@example.com", existingSession.Email)
@@ -212,13 +282,13 @@ func TestOIDCProviderRefreshSessionIfNeededWithIdToken(t *testing.T) {
 	existingSession := &sessions.SessionState{
 		AccessToken:  "changeit",
 		IDToken:      "changeit",
-		CreatedAt:    time.Time{},
-		ExpiresOn:    time.Time{},
+		CreatedAt:    nil,
+		ExpiresOn:    nil,
 		RefreshToken: refreshToken,
 		Email:        "changeit",
 		User:         "changeit",
 	}
-	refreshed, err := provider.RefreshSessionIfNeeded(existingSession)
+	refreshed, err := provider.RefreshSessionIfNeeded(context.Background(), existingSession)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, refreshed, true)
 	assert.Equal(t, defaultIDToken.Email, existingSession.Email)
@@ -228,6 +298,75 @@ func TestOIDCProviderRefreshSessionIfNeededWithIdToken(t *testing.T) {
 	assert.Equal(t, refreshToken, existingSession.RefreshToken)
 }
 
+func TestCreateSessionStateFromBearerToken(t *testing.T) {
+	const profileURLEmail = "janed@me.com"
+
+	testCases := map[string]struct {
+		IDToken        idTokenClaims
+		GroupsClaim    string
+		ExpectedUser   string
+		ExpectedEmail  string
+		ExpectedGroups interface{}
+	}{
+		"Default IDToken": {
+			IDToken:        defaultIDToken,
+			GroupsClaim:    "groups",
+			ExpectedUser:   defaultIDToken.Subject,
+			ExpectedEmail:  defaultIDToken.Email,
+			ExpectedGroups: []string{"test:a", "test:b"},
+		},
+		"Minimal IDToken with no email claim": {
+			IDToken:        minimalIDToken,
+			GroupsClaim:    "groups",
+			ExpectedUser:   minimalIDToken.Subject,
+			ExpectedEmail:  minimalIDToken.Subject,
+			ExpectedGroups: []string{},
+		},
+		"Custom Groups Claim": {
+			IDToken:        defaultIDToken,
+			GroupsClaim:    "other_groups",
+			ExpectedUser:   defaultIDToken.Subject,
+			ExpectedEmail:  defaultIDToken.Email,
+			ExpectedGroups: []string{"test:c", "test:d"},
+		},
+		"Custom Groups Claim2": {
+			IDToken:        customGroupClaimIDToken,
+			GroupsClaim:    "groups",
+			ExpectedUser:   customGroupClaimIDToken.Subject,
+			ExpectedEmail:  customGroupClaimIDToken.Email,
+			ExpectedGroups: []string{"{\"groupId\":\"Admin Group Id\",\"roles\":[\"Admin\"]}"},
+		},
+	}
+	for testName, tc := range testCases {
+		t.Run(testName, func(t *testing.T) {
+			jsonResp := []byte(fmt.Sprintf(`{"email":"%s"}`, profileURLEmail))
+			server, provider := newTestSetup(jsonResp)
+			provider.GroupsClaim = tc.GroupsClaim
+			defer server.Close()
+
+			rawIDToken, err := newSignedTestIDToken(tc.IDToken)
+			assert.NoError(t, err)
+
+			keyset := fakeKeySetStub{}
+			verifier := oidc.NewVerifier("https://issuer.example.com", keyset,
+				&oidc.Config{ClientID: "https://test.myapp.com", SkipExpiryCheck: true})
+
+			idToken, err := verifier.Verify(context.Background(), rawIDToken)
+			assert.NoError(t, err)
+
+			ss, err := provider.CreateSessionStateFromBearerToken(context.Background(), rawIDToken, idToken)
+			assert.NoError(t, err)
+
+			assert.Equal(t, tc.ExpectedUser, ss.User)
+			assert.Equal(t, tc.ExpectedEmail, ss.Email)
+			assert.Equal(t, rawIDToken, ss.IDToken)
+			assert.Equal(t, rawIDToken, ss.AccessToken)
+			assert.Equal(t, tc.ExpectedGroups, ss.Groups)
+			assert.Equal(t, "", ss.RefreshToken)
+		})
+	}
+}
+
 func TestOIDCProvider_findVerifiedIdToken(t *testing.T) {
 
 	server, provider := newTestSetup([]byte(""))
@@ -235,30 +374,60 @@ func TestOIDCProvider_findVerifiedIdToken(t *testing.T) {
 	defer server.Close()
 
 	token := newOauth2Token()
-	signedIdToken, _ := newSignedTestIDToken(defaultIDToken)
-	tokenWithIdToken := token.WithExtra(map[string]interface{}{
-		"id_token": signedIdToken,
+	signedIDToken, _ := newSignedTestIDToken(defaultIDToken)
+	tokenWithIDToken := token.WithExtra(map[string]interface{}{
+		"id_token": signedIDToken,
 	})
 
-	verifiedIdToken, err := provider.findVerifiedIDToken(context.Background(), tokenWithIdToken)
+	verifiedIDToken, err := provider.findVerifiedIDToken(context.Background(), tokenWithIDToken)
 	assert.Equal(t, true, err == nil)
-	assert.Equal(t, true, verifiedIdToken != nil)
-	assert.Equal(t, defaultIDToken.Issuer, verifiedIdToken.Issuer)
-	assert.Equal(t, defaultIDToken.Subject, verifiedIdToken.Subject)
+	if verifiedIDToken == nil {
+		t.Fatal("verifiedIDToken is nil")
+	}
+	assert.Equal(t, defaultIDToken.Issuer, verifiedIDToken.Issuer)
+	assert.Equal(t, defaultIDToken.Subject, verifiedIDToken.Subject)
 
 	// When the validation fails the response should be nil
 	defaultIDToken.Id = "this-id-fails-validation"
-	signedIdToken, _ = newSignedTestIDToken(defaultIDToken)
-	tokenWithIdToken = token.WithExtra(map[string]interface{}{
-		"id_token": signedIdToken,
+	signedIDToken, _ = newSignedTestIDToken(defaultIDToken)
+	tokenWithIDToken = token.WithExtra(map[string]interface{}{
+		"id_token": signedIDToken,
 	})
 
-	verifiedIdToken, err = provider.findVerifiedIDToken(context.Background(), tokenWithIdToken)
+	verifiedIDToken, err = provider.findVerifiedIDToken(context.Background(), tokenWithIDToken)
 	assert.Equal(t, errors.New("failed to verify signature: the validation failed for subject [123456789]"), err)
-	assert.Equal(t, true, verifiedIdToken == nil)
+	assert.Equal(t, true, verifiedIDToken == nil)
 
 	// When there is no id token in the oauth token
-	verifiedIdToken, err = provider.findVerifiedIDToken(context.Background(), newOauth2Token())
+	verifiedIDToken, err = provider.findVerifiedIDToken(context.Background(), newOauth2Token())
 	assert.Equal(t, nil, err)
-	assert.Equal(t, true, verifiedIdToken == nil)
+	assert.Equal(t, true, verifiedIDToken == nil)
+}
+
+func Test_formatGroup(t *testing.T) {
+	testCases := map[string]struct {
+		RawGroup                    interface{}
+		ExpectedFormattedGroupValue string
+	}{
+		"String Group": {
+			RawGroup:                    "group",
+			ExpectedFormattedGroupValue: "group",
+		},
+		"Map Group": {
+			RawGroup:                    map[string]string{"id": "1", "name": "Test"},
+			ExpectedFormattedGroupValue: "{\"id\":\"1\",\"name\":\"Test\"}",
+		},
+		"List Group": {
+			RawGroup:                    []string{"First", "Second"},
+			ExpectedFormattedGroupValue: "[\"First\",\"Second\"]",
+		},
+	}
+
+	for testName, tc := range testCases {
+		t.Run(testName, func(t *testing.T) {
+			formattedGroup, err := formatGroup(tc.RawGroup)
+			assert.Nil(t, err)
+			assert.Equal(t, tc.ExpectedFormattedGroupValue, formattedGroup)
+		})
+	}
 }

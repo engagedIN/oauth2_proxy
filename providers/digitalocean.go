@@ -1,13 +1,12 @@
 package providers
 
 import (
+	"context"
 	"errors"
-	"fmt"
-	"net/http"
 	"net/url"
 
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
-	"github.com/pusher/oauth2_proxy/pkg/requests"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/sessions"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/requests"
 )
 
 // DigitalOceanProvider represents a DigitalOcean based Identity Provider
@@ -15,55 +14,63 @@ type DigitalOceanProvider struct {
 	*ProviderData
 }
 
+var _ Provider = (*DigitalOceanProvider)(nil)
+
+const (
+	digitalOceanProviderName = "DigitalOcean"
+	digitalOceanDefaultScope = "read"
+)
+
+var (
+	// Default Login URL for DigitalOcean.
+	// Pre-parsed URL of https://cloud.digitalocean.com/v1/oauth/authorize.
+	digitalOceanDefaultLoginURL = &url.URL{
+		Scheme: "https",
+		Host:   "cloud.digitalocean.com",
+		Path:   "/v1/oauth/authorize",
+	}
+
+	// Default Redeem URL for DigitalOcean.
+	// Pre-parsed URL of  https://cloud.digitalocean.com/v1/oauth/token.
+	digitalOceanDefaultRedeemURL = &url.URL{
+		Scheme: "https",
+		Host:   "cloud.digitalocean.com",
+		Path:   "/v1/oauth/token",
+	}
+
+	// Default Profile URL for DigitalOcean.
+	// Pre-parsed URL of https://cloud.digitalocean.com/v2/account.
+	digitalOceanDefaultProfileURL = &url.URL{
+		Scheme: "https",
+		Host:   "api.digitalocean.com",
+		Path:   "/v2/account",
+	}
+)
+
 // NewDigitalOceanProvider initiates a new DigitalOceanProvider
 func NewDigitalOceanProvider(p *ProviderData) *DigitalOceanProvider {
-	p.ProviderName = "DigitalOcean"
-	if p.LoginURL.String() == "" {
-		p.LoginURL = &url.URL{Scheme: "https",
-			Host: "cloud.digitalocean.com",
-			Path: "/v1/oauth/authorize",
-		}
-	}
-	if p.RedeemURL.String() == "" {
-		p.RedeemURL = &url.URL{Scheme: "https",
-			Host: "cloud.digitalocean.com",
-			Path: "/v1/oauth/token",
-		}
-	}
-	if p.ProfileURL.String() == "" {
-		p.ProfileURL = &url.URL{Scheme: "https",
-			Host: "api.digitalocean.com",
-			Path: "/v2/account",
-		}
-	}
-	if p.ValidateURL.String() == "" {
-		p.ValidateURL = p.ProfileURL
-	}
-	if p.Scope == "" {
-		p.Scope = "read"
-	}
+	p.setProviderDefaults(providerDefaults{
+		name:        digitalOceanProviderName,
+		loginURL:    digitalOceanDefaultLoginURL,
+		redeemURL:   digitalOceanDefaultRedeemURL,
+		profileURL:  digitalOceanDefaultProfileURL,
+		validateURL: digitalOceanDefaultProfileURL,
+		scope:       digitalOceanDefaultScope,
+	})
 	return &DigitalOceanProvider{ProviderData: p}
 }
 
-func getDigitalOceanHeader(accessToken string) http.Header {
-	header := make(http.Header)
-	header.Set("Content-Type", "application/json")
-	header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
-	return header
-}
-
 // GetEmailAddress returns the Account email address
-func (p *DigitalOceanProvider) GetEmailAddress(s *sessions.SessionState) (string, error) {
+func (p *DigitalOceanProvider) GetEmailAddress(ctx context.Context, s *sessions.SessionState) (string, error) {
 	if s.AccessToken == "" {
 		return "", errors.New("missing access token")
 	}
-	req, err := http.NewRequest("GET", p.ProfileURL.String(), nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header = getDigitalOceanHeader(s.AccessToken)
 
-	json, err := requests.Request(req)
+	json, err := requests.New(p.ProfileURL.String()).
+		WithContext(ctx).
+		WithHeaders(makeOIDCHeader(s.AccessToken)).
+		Do().
+		UnmarshalJSON()
 	if err != nil {
 		return "", err
 	}
@@ -76,6 +83,6 @@ func (p *DigitalOceanProvider) GetEmailAddress(s *sessions.SessionState) (string
 }
 
 // ValidateSessionState validates the AccessToken
-func (p *DigitalOceanProvider) ValidateSessionState(s *sessions.SessionState) bool {
-	return validateToken(p, s.AccessToken, getDigitalOceanHeader(s.AccessToken))
+func (p *DigitalOceanProvider) ValidateSessionState(ctx context.Context, s *sessions.SessionState) bool {
+	return validateToken(ctx, p, s.AccessToken, makeOIDCHeader(s.AccessToken))
 }

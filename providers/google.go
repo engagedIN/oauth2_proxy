@@ -2,23 +2,24 @@ package providers
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
-	"github.com/pusher/oauth2_proxy/pkg/logger"
-	"golang.org/x/oauth2"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/sessions"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/logger"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/requests"
 	"golang.org/x/oauth2/google"
 	admin "google.golang.org/api/admin/directory/v1"
 	"google.golang.org/api/googleapi"
+	"google.golang.org/api/option"
 )
 
 // GoogleProvider represents an Google based Identity Provider
@@ -30,37 +31,57 @@ type GoogleProvider struct {
 	GroupValidator func(string) bool
 }
 
+var _ Provider = (*GoogleProvider)(nil)
+
 type claims struct {
 	Subject       string `json:"sub"`
 	Email         string `json:"email"`
 	EmailVerified bool   `json:"email_verified"`
 }
 
-// NewGoogleProvider initiates a new GoogleProvider
-func NewGoogleProvider(p *ProviderData) *GoogleProvider {
-	p.ProviderName = "Google"
-	if p.LoginURL.String() == "" {
-		p.LoginURL = &url.URL{Scheme: "https",
-			Host: "accounts.google.com",
-			Path: "/o/oauth2/auth",
-			// to get a refresh token. see https://developers.google.com/identity/protocols/OAuth2WebServer#offline
-			RawQuery: "access_type=offline",
-		}
-	}
-	if p.RedeemURL.String() == "" {
-		p.RedeemURL = &url.URL{Scheme: "https",
-			Host: "www.googleapis.com",
-			Path: "/oauth2/v3/token"}
-	}
-	if p.ValidateURL.String() == "" {
-		p.ValidateURL = &url.URL{Scheme: "https",
-			Host: "www.googleapis.com",
-			Path: "/oauth2/v1/tokeninfo"}
-	}
-	if p.Scope == "" {
-		p.Scope = "profile email"
+const (
+	googleProviderName = "Google"
+	googleDefaultScope = "profile email"
+)
+
+var (
+	// Default Login URL for Google.
+	// Pre-parsed URL of https://accounts.google.com/o/oauth2/auth?access_type=offline.
+	googleDefaultLoginURL = &url.URL{
+		Scheme: "https",
+		Host:   "accounts.google.com",
+		Path:   "/o/oauth2/auth",
+		// to get a refresh token. see https://developers.google.com/identity/protocols/OAuth2WebServer#offline
+		RawQuery: "access_type=offline",
 	}
 
+	// Default Redeem URL for Google.
+	// Pre-parsed URL of https://www.googleapis.com/oauth2/v3/token.
+	googleDefaultRedeemURL = &url.URL{
+		Scheme: "https",
+		Host:   "www.googleapis.com",
+		Path:   "/oauth2/v3/token",
+	}
+
+	// Default Validation URL for Google.
+	// Pre-parsed URL of https://www.googleapis.com/oauth2/v1/tokeninfo.
+	googleDefaultValidateURL = &url.URL{
+		Scheme: "https",
+		Host:   "www.googleapis.com",
+		Path:   "/oauth2/v1/tokeninfo",
+	}
+)
+
+// NewGoogleProvider initiates a new GoogleProvider
+func NewGoogleProvider(p *ProviderData) *GoogleProvider {
+	p.setProviderDefaults(providerDefaults{
+		name:        googleProviderName,
+		loginURL:    googleDefaultLoginURL,
+		redeemURL:   googleDefaultRedeemURL,
+		profileURL:  nil,
+		validateURL: googleDefaultValidateURL,
+		scope:       googleDefaultScope,
+	})
 	return &GoogleProvider{
 		ProviderData: p,
 		// Set a default GroupValidator to just always return valid (true), it will
@@ -97,40 +118,22 @@ func claimsFromIDToken(idToken string) (*claims, error) {
 }
 
 // Redeem exchanges the OAuth2 authentication token for an ID token
-func (p *GoogleProvider) Redeem(redirectURL, code string) (s *sessions.SessionState, err error) {
+func (p *GoogleProvider) Redeem(ctx context.Context, redirectURL, code string) (s *sessions.SessionState, err error) {
 	if code == "" {
 		err = errors.New("missing code")
+		return
+	}
+	clientSecret, err := p.GetClientSecret()
+	if err != nil {
 		return
 	}
 
 	params := url.Values{}
 	params.Add("redirect_uri", redirectURL)
 	params.Add("client_id", p.ClientID)
-	params.Add("client_secret", p.ClientSecret)
+	params.Add("client_secret", clientSecret)
 	params.Add("code", code)
 	params.Add("grant_type", "authorization_code")
-	var req *http.Request
-	req, err = http.NewRequest("POST", p.RedeemURL.String(), bytes.NewBufferString(params.Encode()))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return
-	}
-	var body []byte
-	body, err = ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		return
-	}
-
-	if resp.StatusCode != 200 {
-		err = fmt.Errorf("got %d from %q %s", resp.StatusCode, p.RedeemURL.String(), body)
-		return
-	}
 
 	var jsonResponse struct {
 		AccessToken  string `json:"access_token"`
@@ -138,19 +141,30 @@ func (p *GoogleProvider) Redeem(redirectURL, code string) (s *sessions.SessionSt
 		ExpiresIn    int64  `json:"expires_in"`
 		IDToken      string `json:"id_token"`
 	}
-	err = json.Unmarshal(body, &jsonResponse)
+
+	err = requests.New(p.RedeemURL.String()).
+		WithContext(ctx).
+		WithMethod("POST").
+		WithBody(bytes.NewBufferString(params.Encode())).
+		SetHeader("Content-Type", "application/x-www-form-urlencoded").
+		Do().
+		UnmarshalInto(&jsonResponse)
 	if err != nil {
-		return
+		return nil, err
 	}
+
 	c, err := claimsFromIDToken(jsonResponse.IDToken)
 	if err != nil {
 		return
 	}
+
+	created := time.Now()
+	expires := time.Now().Add(time.Duration(jsonResponse.ExpiresIn) * time.Second).Truncate(time.Second)
 	s = &sessions.SessionState{
 		AccessToken:  jsonResponse.AccessToken,
 		IDToken:      jsonResponse.IDToken,
-		CreatedAt:    time.Now(),
-		ExpiresOn:    time.Now().Add(time.Duration(jsonResponse.ExpiresIn) * time.Second).Truncate(time.Second),
+		CreatedAt:    &created,
+		ExpiresOn:    &expires,
 		RefreshToken: jsonResponse.RefreshToken,
 		Email:        c.Email,
 		User:         c.Subject,
@@ -180,8 +194,9 @@ func getAdminService(adminEmail string, credentialsReader io.Reader) *admin.Serv
 	}
 	conf.Subject = adminEmail
 
-	client := conf.Client(oauth2.NoContext)
-	adminService, err := admin.New(client)
+	ctx := context.Background()
+	client := conf.Client(ctx)
+	adminService, err := admin.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -194,11 +209,11 @@ func userInGroup(service *admin.Service, groups []string, email string) bool {
 		req := service.Members.HasMember(group, email)
 		r, err := req.Do()
 		if err != nil {
-			err, ok := err.(*googleapi.Error)
+			gerr, ok := err.(*googleapi.Error)
 			switch {
-			case ok && err.Code == 404:
-				logger.Printf("error checking membership in group %s: group does not exist", group)
-			case ok && err.Code == 400:
+			case ok && gerr.Code == 404:
+				logger.Errorf("error checking membership in group %s: group does not exist", group)
+			case ok && gerr.Code == 400:
 				// It is possible for Members.HasMember to return false even if the email is a group member.
 				// One case that can cause this is if the user email is from a different domain than the group,
 				// e.g. "member@otherdomain.com" in the group "group@mydomain.com" will result in a 400 error
@@ -207,7 +222,7 @@ func userInGroup(service *admin.Service, groups []string, email string) bool {
 				r, err := req.Do()
 
 				if err != nil {
-					logger.Printf("error using get API to check member %s of google group %s: user not in the group", email, group)
+					logger.Errorf("error using get API to check member %s of google group %s: user not in the group", email, group)
 					continue
 				}
 
@@ -217,7 +232,7 @@ func userInGroup(service *admin.Service, groups []string, email string) bool {
 					return true
 				}
 			default:
-				logger.Printf("error checking group membership: %v", err)
+				logger.Errorf("error checking group membership: %v", err)
 			}
 			continue
 		}
@@ -236,12 +251,12 @@ func (p *GoogleProvider) ValidateGroup(email string) bool {
 
 // RefreshSessionIfNeeded checks if the session has expired and uses the
 // RefreshToken to fetch a new ID token if required
-func (p *GoogleProvider) RefreshSessionIfNeeded(s *sessions.SessionState) (bool, error) {
-	if s == nil || s.ExpiresOn.After(time.Now()) || s.RefreshToken == "" {
+func (p *GoogleProvider) RefreshSessionIfNeeded(ctx context.Context, s *sessions.SessionState) (bool, error) {
+	if s == nil || (s.ExpiresOn != nil && s.ExpiresOn.After(time.Now())) || s.RefreshToken == "" {
 		return false, nil
 	}
 
-	newToken, newIDToken, duration, err := p.redeemRefreshToken(s.RefreshToken)
+	newToken, newIDToken, duration, err := p.redeemRefreshToken(ctx, s.RefreshToken)
 	if err != nil {
 		return false, err
 	}
@@ -252,52 +267,44 @@ func (p *GoogleProvider) RefreshSessionIfNeeded(s *sessions.SessionState) (bool,
 	}
 
 	origExpiration := s.ExpiresOn
+	expires := time.Now().Add(duration).Truncate(time.Second)
 	s.AccessToken = newToken
 	s.IDToken = newIDToken
-	s.ExpiresOn = time.Now().Add(duration).Truncate(time.Second)
+	s.ExpiresOn = &expires
 	logger.Printf("refreshed access token %s (expired on %s)", s, origExpiration)
 	return true, nil
 }
 
-func (p *GoogleProvider) redeemRefreshToken(refreshToken string) (token string, idToken string, expires time.Duration, err error) {
+func (p *GoogleProvider) redeemRefreshToken(ctx context.Context, refreshToken string) (token string, idToken string, expires time.Duration, err error) {
 	// https://developers.google.com/identity/protocols/OAuth2WebServer#refresh
+	clientSecret, err := p.GetClientSecret()
+	if err != nil {
+		return
+	}
+
 	params := url.Values{}
 	params.Add("client_id", p.ClientID)
-	params.Add("client_secret", p.ClientSecret)
+	params.Add("client_secret", clientSecret)
 	params.Add("refresh_token", refreshToken)
 	params.Add("grant_type", "refresh_token")
-	var req *http.Request
-	req, err = http.NewRequest("POST", p.RedeemURL.String(), bytes.NewBufferString(params.Encode()))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return
-	}
-	var body []byte
-	body, err = ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		return
-	}
-
-	if resp.StatusCode != 200 {
-		err = fmt.Errorf("got %d from %q %s", resp.StatusCode, p.RedeemURL.String(), body)
-		return
-	}
 
 	var data struct {
 		AccessToken string `json:"access_token"`
 		ExpiresIn   int64  `json:"expires_in"`
 		IDToken     string `json:"id_token"`
 	}
-	err = json.Unmarshal(body, &data)
+
+	err = requests.New(p.RedeemURL.String()).
+		WithContext(ctx).
+		WithMethod("POST").
+		WithBody(bytes.NewBufferString(params.Encode())).
+		SetHeader("Content-Type", "application/x-www-form-urlencoded").
+		Do().
+		UnmarshalInto(&data)
 	if err != nil {
-		return
+		return "", "", 0, err
 	}
+
 	token = data.AccessToken
 	idToken = data.IDToken
 	expires = time.Duration(data.ExpiresIn) * time.Second

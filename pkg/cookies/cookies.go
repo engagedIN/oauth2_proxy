@@ -7,20 +7,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pusher/oauth2_proxy/pkg/apis/options"
-	"github.com/pusher/oauth2_proxy/pkg/logger"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/options"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/logger"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/util"
 )
 
 // MakeCookie constructs a cookie from the given parameters,
 // discovering the domain from the request if not specified.
 func MakeCookie(req *http.Request, name string, value string, path string, domain string, httpOnly bool, secure bool, expiration time.Duration, now time.Time, sameSite http.SameSite) *http.Cookie {
 	if domain != "" {
-		host := req.Host
+		host := util.GetRequestHost(req)
 		if h, _, err := net.SplitHostPort(host); err == nil {
 			host = h
 		}
 		if !strings.HasSuffix(host, domain) {
-			logger.Printf("Warning: request host is %q but using configured cookie domain of %q", host, domain)
+			logger.Errorf("Warning: request host is %q but using configured cookie domain of %q", host, domain)
 		}
 	}
 
@@ -38,8 +39,31 @@ func MakeCookie(req *http.Request, name string, value string, path string, domai
 
 // MakeCookieFromOptions constructs a cookie based on the given *options.CookieOptions,
 // value and creation time
-func MakeCookieFromOptions(req *http.Request, name string, value string, opts *options.CookieOptions, expiration time.Duration, now time.Time) *http.Cookie {
-	return MakeCookie(req, name, value, opts.CookiePath, opts.CookieDomain, opts.CookieHTTPOnly, opts.CookieSecure, expiration, now, ParseSameSite(opts.CookieSameSite))
+func MakeCookieFromOptions(req *http.Request, name string, value string, cookieOpts *options.Cookie, expiration time.Duration, now time.Time) *http.Cookie {
+	domain := GetCookieDomain(req, cookieOpts.Domains)
+
+	if domain != "" {
+		return MakeCookie(req, name, value, cookieOpts.Path, domain, cookieOpts.HTTPOnly, cookieOpts.Secure, expiration, now, ParseSameSite(cookieOpts.SameSite))
+	}
+	// If nothing matches, create the cookie with the shortest domain
+	defaultDomain := ""
+	if len(cookieOpts.Domains) > 0 {
+		logger.Errorf("Warning: request host %q did not match any of the specific cookie domains of %q", util.GetRequestHost(req), strings.Join(cookieOpts.Domains, ","))
+		defaultDomain = cookieOpts.Domains[len(cookieOpts.Domains)-1]
+	}
+	return MakeCookie(req, name, value, cookieOpts.Path, defaultDomain, cookieOpts.HTTPOnly, cookieOpts.Secure, expiration, now, ParseSameSite(cookieOpts.SameSite))
+}
+
+// GetCookieDomain returns the correct cookie domain given a list of domains
+// by checking the X-Fowarded-Host and host header of an an http request
+func GetCookieDomain(req *http.Request, cookieDomains []string) string {
+	host := util.GetRequestHost(req)
+	for _, domain := range cookieDomains {
+		if strings.HasSuffix(host, domain) {
+			return domain
+		}
+	}
+	return ""
 }
 
 // Parse a valid http.SameSite value from a user supplied string for use of making cookies.

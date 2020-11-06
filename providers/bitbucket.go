@@ -1,13 +1,13 @@
 package providers
 
 import (
-	"net/http"
+	"context"
 	"net/url"
 	"strings"
 
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
-	"github.com/pusher/oauth2_proxy/pkg/logger"
-	"github.com/pusher/oauth2_proxy/pkg/requests"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/sessions"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/logger"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/requests"
 )
 
 // BitbucketProvider represents an Bitbucket based Identity Provider
@@ -17,33 +17,51 @@ type BitbucketProvider struct {
 	Repository string
 }
 
+var _ Provider = (*BitbucketProvider)(nil)
+
+const (
+	bitbucketProviderName = "Bitbucket"
+	bitbucketDefaultScope = "email"
+)
+
+var (
+	// Default Login URL for Bitbucket.
+	// Pre-parsed URL of https://bitbucket.org/site/oauth2/authorize.
+	bitbucketDefaultLoginURL = &url.URL{
+		Scheme: "https",
+		Host:   "bitbucket.org",
+		Path:   "/site/oauth2/authorize",
+	}
+
+	// Default Redeem URL for Bitbucket.
+	// Pre-parsed URL of https://bitbucket.org/site/oauth2/access_token.
+	bitbucketDefaultRedeemURL = &url.URL{
+		Scheme: "https",
+		Host:   "bitbucket.org",
+		Path:   "/site/oauth2/access_token",
+	}
+
+	// Default Validation URL for Bitbucket.
+	// This simply returns the email of the authenticated user.
+	// Bitbucket does not have a Profile URL to use.
+	// Pre-parsed URL of https://api.bitbucket.org/2.0/user/emails.
+	bitbucketDefaultValidateURL = &url.URL{
+		Scheme: "https",
+		Host:   "api.bitbucket.org",
+		Path:   "/2.0/user/emails",
+	}
+)
+
 // NewBitbucketProvider initiates a new BitbucketProvider
 func NewBitbucketProvider(p *ProviderData) *BitbucketProvider {
-	p.ProviderName = "Bitbucket"
-	if p.LoginURL == nil || p.LoginURL.String() == "" {
-		p.LoginURL = &url.URL{
-			Scheme: "https",
-			Host:   "bitbucket.org",
-			Path:   "/site/oauth2/authorize",
-		}
-	}
-	if p.RedeemURL == nil || p.RedeemURL.String() == "" {
-		p.RedeemURL = &url.URL{
-			Scheme: "https",
-			Host:   "bitbucket.org",
-			Path:   "/site/oauth2/access_token",
-		}
-	}
-	if p.ValidateURL == nil || p.ValidateURL.String() == "" {
-		p.ValidateURL = &url.URL{
-			Scheme: "https",
-			Host:   "api.bitbucket.org",
-			Path:   "/2.0/user/emails",
-		}
-	}
-	if p.Scope == "" {
-		p.Scope = "email"
-	}
+	p.setProviderDefaults(providerDefaults{
+		name:        bitbucketProviderName,
+		loginURL:    bitbucketDefaultLoginURL,
+		redeemURL:   bitbucketDefaultRedeemURL,
+		profileURL:  nil,
+		validateURL: bitbucketDefaultValidateURL,
+		scope:       bitbucketDefaultScope,
+	})
 	return &BitbucketProvider{ProviderData: p}
 }
 
@@ -64,7 +82,7 @@ func (p *BitbucketProvider) SetRepository(repository string) {
 }
 
 // GetEmailAddress returns the email of the authenticated user
-func (p *BitbucketProvider) GetEmailAddress(s *sessions.SessionState) (string, error) {
+func (p *BitbucketProvider) GetEmailAddress(ctx context.Context, s *sessions.SessionState) (string, error) {
 
 	var emails struct {
 		Values []struct {
@@ -82,15 +100,14 @@ func (p *BitbucketProvider) GetEmailAddress(s *sessions.SessionState) (string, e
 			FullName string `json:"full_name"`
 		}
 	}
-	req, err := http.NewRequest("GET",
-		p.ValidateURL.String()+"?access_token="+s.AccessToken, nil)
+
+	requestURL := p.ValidateURL.String() + "?access_token=" + s.AccessToken
+	err := requests.New(requestURL).
+		WithContext(ctx).
+		Do().
+		UnmarshalInto(&emails)
 	if err != nil {
-		logger.Printf("failed building request %s", err)
-		return "", err
-	}
-	err = requests.RequestJSON(req, &emails)
-	if err != nil {
-		logger.Printf("failed making request %s", err)
+		logger.Errorf("failed making request: %v", err)
 		return "", err
 	}
 
@@ -98,15 +115,15 @@ func (p *BitbucketProvider) GetEmailAddress(s *sessions.SessionState) (string, e
 		teamURL := &url.URL{}
 		*teamURL = *p.ValidateURL
 		teamURL.Path = "/2.0/teams"
-		req, err = http.NewRequest("GET",
-			teamURL.String()+"?role=member&access_token="+s.AccessToken, nil)
+
+		requestURL := teamURL.String() + "?role=member&access_token=" + s.AccessToken
+
+		err := requests.New(requestURL).
+			WithContext(ctx).
+			Do().
+			UnmarshalInto(&teams)
 		if err != nil {
-			logger.Printf("failed building request %s", err)
-			return "", err
-		}
-		err = requests.RequestJSON(req, &teams)
-		if err != nil {
-			logger.Printf("failed requesting teams membership %s", err)
+			logger.Errorf("failed requesting teams membership: %v", err)
 			return "", err
 		}
 		var found = false
@@ -116,8 +133,8 @@ func (p *BitbucketProvider) GetEmailAddress(s *sessions.SessionState) (string, e
 				break
 			}
 		}
-		if found != true {
-			logger.Print("team membership test failed, access denied")
+		if !found {
+			logger.Error("team membership test failed, access denied")
 			return "", nil
 		}
 	}
@@ -126,20 +143,20 @@ func (p *BitbucketProvider) GetEmailAddress(s *sessions.SessionState) (string, e
 		repositoriesURL := &url.URL{}
 		*repositoriesURL = *p.ValidateURL
 		repositoriesURL.Path = "/2.0/repositories/" + strings.Split(p.Repository, "/")[0]
-		req, err = http.NewRequest("GET",
-			repositoriesURL.String()+"?role=contributor"+
-				"&q=full_name="+url.QueryEscape("\""+p.Repository+"\"")+
-				"&access_token="+s.AccessToken,
-			nil)
+
+		requestURL := repositoriesURL.String() + "?role=contributor" +
+			"&q=full_name=" + url.QueryEscape("\""+p.Repository+"\"") +
+			"&access_token=" + s.AccessToken
+
+		err := requests.New(requestURL).
+			WithContext(ctx).
+			Do().
+			UnmarshalInto(&repositories)
 		if err != nil {
-			logger.Printf("failed building request %s", err)
+			logger.Errorf("failed checking repository access: %v", err)
 			return "", err
 		}
-		err = requests.RequestJSON(req, &repositories)
-		if err != nil {
-			logger.Printf("failed checking repository access %s", err)
-			return "", err
-		}
+
 		var found = false
 		for _, repository := range repositories.Values {
 			if p.Repository == repository.FullName {
@@ -147,8 +164,8 @@ func (p *BitbucketProvider) GetEmailAddress(s *sessions.SessionState) (string, e
 				break
 			}
 		}
-		if found != true {
-			logger.Print("repository access test failed, access denied")
+		if !found {
+			logger.Error("repository access test failed, access denied")
 			return "", nil
 		}
 	}

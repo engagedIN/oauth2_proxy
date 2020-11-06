@@ -1,12 +1,14 @@
 package providers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/sessions"
+	. "github.com/onsi/gomega"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -43,19 +45,17 @@ func testDigitalOceanBackend(payload string) *httptest.Server {
 		}))
 }
 
-func TestDigitalOceanProviderDefaults(t *testing.T) {
-	p := testDigitalOceanProvider("")
-	assert.NotEqual(t, nil, p)
-	assert.Equal(t, "DigitalOcean", p.Data().ProviderName)
-	assert.Equal(t, "https://cloud.digitalocean.com/v1/oauth/authorize",
-		p.Data().LoginURL.String())
-	assert.Equal(t, "https://cloud.digitalocean.com/v1/oauth/token",
-		p.Data().RedeemURL.String())
-	assert.Equal(t, "https://api.digitalocean.com/v2/account",
-		p.Data().ProfileURL.String())
-	assert.Equal(t, "https://api.digitalocean.com/v2/account",
-		p.Data().ValidateURL.String())
-	assert.Equal(t, "read", p.Data().Scope)
+func TestNewDigitalOceanProvider(t *testing.T) {
+	g := NewWithT(t)
+
+	// Test that defaults are set when calling for a new provider with nothing set
+	providerData := NewDigitalOceanProvider(&ProviderData{}).Data()
+	g.Expect(providerData.ProviderName).To(Equal("DigitalOcean"))
+	g.Expect(providerData.LoginURL.String()).To(Equal("https://cloud.digitalocean.com/v1/oauth/authorize"))
+	g.Expect(providerData.RedeemURL.String()).To(Equal("https://cloud.digitalocean.com/v1/oauth/token"))
+	g.Expect(providerData.ProfileURL.String()).To(Equal("https://api.digitalocean.com/v2/account"))
+	g.Expect(providerData.ValidateURL.String()).To(Equal("https://api.digitalocean.com/v2/account"))
+	g.Expect(providerData.Scope).To(Equal("read"))
 }
 
 func TestDigitalOceanProviderOverrides(t *testing.T) {
@@ -99,7 +99,7 @@ func TestDigitalOceanProviderGetEmailAddress(t *testing.T) {
 	p := testDigitalOceanProvider(bURL.Host)
 
 	session := CreateAuthorizedSession()
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "user@example.com", email)
 }
@@ -115,7 +115,7 @@ func TestDigitalOceanProviderGetEmailAddressFailedRequest(t *testing.T) {
 	// token. Alternatively, we could allow the parsing of the payload as
 	// JSON to fail.
 	session := &sessions.SessionState{AccessToken: "unexpected_access_token"}
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.NotEqual(t, nil, err)
 	assert.Equal(t, "", email)
 }
@@ -128,7 +128,7 @@ func TestDigitalOceanProviderGetEmailAddressEmailNotPresentInPayload(t *testing.
 	p := testDigitalOceanProvider(bURL.Host)
 
 	session := CreateAuthorizedSession()
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.NotEqual(t, nil, err)
 	assert.Equal(t, "", email)
 }

@@ -1,12 +1,16 @@
 package providers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
 
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/sessions"
+
+	. "github.com/onsi/gomega"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -31,23 +35,17 @@ func testAzureProvider(hostname string) *AzureProvider {
 	return p
 }
 
-func TestAzureProviderDefaults(t *testing.T) {
-	p := testAzureProvider("")
-	assert.NotEqual(t, nil, p)
-	p.Configure("")
-	assert.Equal(t, "Azure", p.Data().ProviderName)
-	assert.Equal(t, "common", p.Tenant)
-	assert.Equal(t, "https://login.microsoftonline.com/common/oauth2/authorize",
-		p.Data().LoginURL.String())
-	assert.Equal(t, "https://login.microsoftonline.com/common/oauth2/token",
-		p.Data().RedeemURL.String())
-	assert.Equal(t, "https://graph.windows.net/me?api-version=1.6",
-		p.Data().ProfileURL.String())
-	assert.Equal(t, "https://graph.windows.net",
-		p.Data().ProtectedResource.String())
-	assert.Equal(t, "",
-		p.Data().ValidateURL.String())
-	assert.Equal(t, "openid", p.Data().Scope)
+func TestNewAzureProvider(t *testing.T) {
+	g := NewWithT(t)
+
+	// Test that defaults are set when calling for a new provider with nothing set
+	providerData := NewAzureProvider(&ProviderData{}).Data()
+	g.Expect(providerData.ProviderName).To(Equal("Azure"))
+	g.Expect(providerData.LoginURL.String()).To(Equal("https://login.microsoftonline.com/common/oauth2/authorize"))
+	g.Expect(providerData.RedeemURL.String()).To(Equal("https://login.microsoftonline.com/common/oauth2/token"))
+	g.Expect(providerData.ProfileURL.String()).To(Equal("https://graph.microsoft.com/v1.0/me"))
+	g.Expect(providerData.ValidateURL.String()).To(Equal("https://graph.microsoft.com/v1.0/me"))
+	g.Expect(providerData.Scope).To(Equal("openid"))
 }
 
 func TestAzureProviderOverrides(t *testing.T) {
@@ -97,24 +95,22 @@ func TestAzureSetTenant(t *testing.T) {
 		p.Data().LoginURL.String())
 	assert.Equal(t, "https://login.microsoftonline.com/example/oauth2/token",
 		p.Data().RedeemURL.String())
-	assert.Equal(t, "https://graph.windows.net/me?api-version=1.6",
+	assert.Equal(t, "https://graph.microsoft.com/v1.0/me",
 		p.Data().ProfileURL.String())
-	assert.Equal(t, "https://graph.windows.net",
+	assert.Equal(t, "https://graph.microsoft.com",
 		p.Data().ProtectedResource.String())
-	assert.Equal(t, "",
-		p.Data().ValidateURL.String())
+	assert.Equal(t, "https://graph.microsoft.com/v1.0/me", p.Data().ValidateURL.String())
 	assert.Equal(t, "openid", p.Data().Scope)
 }
 
 func testAzureBackend(payload string) *httptest.Server {
-	path := "/me"
-	query := "api-version=1.6"
+	path := "/v1.0/me"
 
 	return httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			if (r.URL.Path != path || r.URL.RawQuery != query) && r.Method != "POST" {
+			if (r.URL.Path != path) && r.Method != http.MethodPost {
 				w.WriteHeader(404)
-			} else if r.Method == "POST" && r.Body != nil {
+			} else if r.Method == http.MethodPost && r.Body != nil {
 				w.WriteHeader(200)
 				w.Write([]byte(payload))
 			} else if !IsAuthorizedInHeader(r.Header) {
@@ -134,7 +130,7 @@ func TestAzureProviderGetEmailAddress(t *testing.T) {
 	p := testAzureProvider(bURL.Host)
 
 	session := CreateAuthorizedSession()
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "user@windows.net", email)
 }
@@ -147,7 +143,7 @@ func TestAzureProviderGetEmailAddressMailNull(t *testing.T) {
 	p := testAzureProvider(bURL.Host)
 
 	session := CreateAuthorizedSession()
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "user@windows.net", email)
 }
@@ -160,7 +156,7 @@ func TestAzureProviderGetEmailAddressGetUserPrincipalName(t *testing.T) {
 	p := testAzureProvider(bURL.Host)
 
 	session := CreateAuthorizedSession()
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "user@windows.net", email)
 }
@@ -173,7 +169,7 @@ func TestAzureProviderGetEmailAddressFailToGetEmailAddress(t *testing.T) {
 	p := testAzureProvider(bURL.Host)
 
 	session := CreateAuthorizedSession()
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, "type assertion to string failed", err.Error())
 	assert.Equal(t, "", email)
 }
@@ -186,7 +182,7 @@ func TestAzureProviderGetEmailAddressEmptyUserPrincipalName(t *testing.T) {
 	p := testAzureProvider(bURL.Host)
 
 	session := CreateAuthorizedSession()
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "", email)
 }
@@ -199,7 +195,7 @@ func TestAzureProviderGetEmailAddressIncorrectOtherMails(t *testing.T) {
 	p := testAzureProvider(bURL.Host)
 
 	session := CreateAuthorizedSession()
-	email, err := p.GetEmailAddress(session)
+	email, err := p.GetEmailAddress(context.Background(), session)
 	assert.Equal(t, "type assertion to string failed", err.Error())
 	assert.Equal(t, "", email)
 }
@@ -213,9 +209,60 @@ func TestAzureProviderRedeemReturnsIdToken(t *testing.T) {
 	bURL, _ := url.Parse(b.URL)
 	p := testAzureProvider(bURL.Host)
 	p.Data().RedeemURL.Path = "/common/oauth2/token"
-	s, err := p.Redeem("https://localhost", "1234")
+	s, err := p.Redeem(context.Background(), "https://localhost", "1234")
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "testtoken1234", s.IDToken)
 	assert.Equal(t, timestamp, s.ExpiresOn.UTC())
 	assert.Equal(t, "refresh1234", s.RefreshToken)
+}
+
+func TestAzureProviderProtectedResourceConfigured(t *testing.T) {
+	p := testAzureProvider("")
+	p.ProtectedResource, _ = url.Parse("http://my.resource.test")
+	result := p.GetLoginURL("https://my.test.app/oauth", "")
+	assert.Contains(t, result, "resource="+url.QueryEscape("http://my.resource.test"))
+}
+
+func TestAzureProviderGetsTokensInRedeem(t *testing.T) {
+	b := testAzureBackend(`{ "access_token": "some_access_token", "refresh_token": "some_refresh_token", "expires_on": "1136239445", "id_token": "some_id_token" }`)
+	defer b.Close()
+	timestamp, _ := time.Parse(time.RFC3339, "2006-01-02T22:04:05Z")
+	bURL, _ := url.Parse(b.URL)
+	p := testAzureProvider(bURL.Host)
+
+	session, err := p.Redeem(context.Background(), "http://redirect/", "code1234")
+	assert.Equal(t, nil, err)
+	assert.NotEqual(t, session, nil)
+	assert.Equal(t, "some_access_token", session.AccessToken)
+	assert.Equal(t, "some_refresh_token", session.RefreshToken)
+	assert.Equal(t, "some_id_token", session.IDToken)
+	assert.Equal(t, timestamp, session.ExpiresOn.UTC())
+}
+
+func TestAzureProviderNotRefreshWhenNotExpired(t *testing.T) {
+	p := testAzureProvider("")
+
+	expires := time.Now().Add(time.Duration(1) * time.Hour)
+	session := &sessions.SessionState{AccessToken: "some_access_token", RefreshToken: "some_refresh_token", IDToken: "some_id_token", ExpiresOn: &expires}
+	refreshNeeded, err := p.RefreshSessionIfNeeded(context.Background(), session)
+	assert.Equal(t, nil, err)
+	assert.False(t, refreshNeeded)
+}
+
+func TestAzureProviderRefreshWhenExpired(t *testing.T) {
+	b := testAzureBackend(`{ "access_token": "new_some_access_token", "refresh_token": "new_some_refresh_token", "expires_on": "32693148245", "id_token": "new_some_id_token" }`)
+	defer b.Close()
+	timestamp, _ := time.Parse(time.RFC3339, "3006-01-02T22:04:05Z")
+	bURL, _ := url.Parse(b.URL)
+	p := testAzureProvider(bURL.Host)
+
+	expires := time.Now().Add(time.Duration(-1) * time.Hour)
+	session := &sessions.SessionState{AccessToken: "some_access_token", RefreshToken: "some_refresh_token", IDToken: "some_id_token", ExpiresOn: &expires}
+	_, err := p.RefreshSessionIfNeeded(context.Background(), session)
+	assert.Equal(t, nil, err)
+	assert.NotEqual(t, session, nil)
+	assert.Equal(t, "new_some_access_token", session.AccessToken)
+	assert.Equal(t, "new_some_refresh_token", session.RefreshToken)
+	assert.Equal(t, "new_some_id_token", session.IDToken)
+	assert.Equal(t, timestamp, session.ExpiresOn.UTC())
 }

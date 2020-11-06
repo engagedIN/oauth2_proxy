@@ -2,38 +2,89 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
-	"time"
 
-	"github.com/pusher/oauth2_proxy/pkg/logger"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/logger"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestLoggingHandler_ServeHTTP(t *testing.T) {
-	ts := time.Now()
+const RequestLoggingFormatWithoutTime = "{{.Client}} - {{.Username}} [TIMELESS] {{.Host}} {{.RequestMethod}} {{.Upstream}} {{.RequestURI}} {{.Protocol}} {{.UserAgent}} {{.StatusCode}} {{.ResponseSize}} {{.RequestDuration}}"
 
+func TestLoggingHandler_ServeHTTP(t *testing.T) {
 	tests := []struct {
-		Format,
-		ExpectedLogMessage,
-		Path string
+		Format             string
+		ExpectedLogMessage string
+		Path               string
 		ExcludePaths       []string
-		SilencePingLogging bool
 	}{
-		{logger.DefaultRequestLoggingFormat, fmt.Sprintf("127.0.0.1 - - [%s] test-server GET - \"/foo/bar\" HTTP/1.1 \"\" 200 4 0.000\n", logger.FormatTimestamp(ts)), "/foo/bar", []string{}, false},
-		{logger.DefaultRequestLoggingFormat, fmt.Sprintf("127.0.0.1 - - [%s] test-server GET - \"/foo/bar\" HTTP/1.1 \"\" 200 4 0.000\n", logger.FormatTimestamp(ts)), "/foo/bar", []string{}, true},
-		{logger.DefaultRequestLoggingFormat, fmt.Sprintf("127.0.0.1 - - [%s] test-server GET - \"/foo/bar\" HTTP/1.1 \"\" 200 4 0.000\n", logger.FormatTimestamp(ts)), "/foo/bar", []string{"/ping"}, false},
-		{logger.DefaultRequestLoggingFormat, "", "/foo/bar", []string{"/foo/bar"}, false},
-		{logger.DefaultRequestLoggingFormat, "", "/ping", []string{}, true},
-		{logger.DefaultRequestLoggingFormat, "", "/ping", []string{"/ping"}, false},
-		{logger.DefaultRequestLoggingFormat, "", "/ping", []string{"/ping"}, true},
-		{logger.DefaultRequestLoggingFormat, "", "/ping", []string{"/foo/bar", "/ping"}, false},
-		{"{{.RequestMethod}}", "GET\n", "/foo/bar", []string{}, true},
-		{"{{.RequestMethod}}", "GET\n", "/foo/bar", []string{"/ping"}, false},
-		{"{{.RequestMethod}}", "GET\n", "/ping", []string{}, false},
-		{"{{.RequestMethod}}", "", "/ping", []string{"/ping"}, true},
+		{
+			Format:             RequestLoggingFormatWithoutTime,
+			ExpectedLogMessage: "127.0.0.1 - - [TIMELESS] test-server GET - \"/foo/bar\" HTTP/1.1 \"\" 200 4 0.000\n",
+			Path:               "/foo/bar",
+			ExcludePaths:       []string{},
+		},
+		{
+			Format:             RequestLoggingFormatWithoutTime,
+			ExpectedLogMessage: "127.0.0.1 - - [TIMELESS] test-server GET - \"/foo/bar\" HTTP/1.1 \"\" 200 4 0.000\n",
+			Path:               "/foo/bar",
+			ExcludePaths:       []string{},
+		},
+		{
+			Format:             RequestLoggingFormatWithoutTime,
+			ExpectedLogMessage: "127.0.0.1 - - [TIMELESS] test-server GET - \"/foo/bar\" HTTP/1.1 \"\" 200 4 0.000\n",
+			Path:               "/foo/bar",
+			ExcludePaths:       []string{"/ping"},
+		},
+		{
+			Format:             RequestLoggingFormatWithoutTime,
+			ExpectedLogMessage: "",
+			Path:               "/foo/bar",
+			ExcludePaths:       []string{"/foo/bar"},
+		},
+		{
+			Format:             RequestLoggingFormatWithoutTime,
+			ExpectedLogMessage: "127.0.0.1 - - [TIMELESS] test-server GET - \"/ping\" HTTP/1.1 \"\" 200 4 0.000\n",
+			Path:               "/ping",
+			ExcludePaths:       []string{},
+		},
+		{
+			Format:             RequestLoggingFormatWithoutTime,
+			ExpectedLogMessage: "",
+			Path:               "/ping",
+			ExcludePaths:       []string{"/ping"},
+		},
+		{
+			Format:             RequestLoggingFormatWithoutTime,
+			ExpectedLogMessage: "",
+			Path:               "/ping",
+			ExcludePaths:       []string{"/foo/bar", "/ping"},
+		},
+		{
+			Format:             "{{.RequestMethod}}",
+			ExpectedLogMessage: "GET\n",
+			Path:               "/foo/bar",
+			ExcludePaths:       []string{""},
+		},
+		{
+			Format:             "{{.RequestMethod}}",
+			ExpectedLogMessage: "GET\n",
+			Path:               "/foo/bar",
+			ExcludePaths:       []string{"/ping"},
+		},
+		{
+			Format:             "{{.RequestMethod}}",
+			ExpectedLogMessage: "GET\n",
+			Path:               "/ping",
+			ExcludePaths:       []string{""},
+		},
+		{
+			Format:             "{{.RequestMethod}}",
+			ExpectedLogMessage: "",
+			Path:               "/ping",
+			ExcludePaths:       []string{"/ping"},
+		},
 	}
 
 	for _, test := range tests {
@@ -44,14 +95,12 @@ func TestLoggingHandler_ServeHTTP(t *testing.T) {
 				t.Error("http.Hijacker is not available")
 			}
 
-			w.Write([]byte("test"))
+			_, err := w.Write([]byte("test"))
+			assert.NoError(t, err)
 		}
 
 		logger.SetOutput(buf)
 		logger.SetReqTemplate(test.Format)
-		if test.SilencePingLogging {
-			test.ExcludePaths = append(test.ExcludePaths, "/ping")
-		}
 		logger.SetExcludePaths(test.ExcludePaths)
 		h := LoggingHandler(http.HandlerFunc(handler))
 
@@ -62,8 +111,6 @@ func TestLoggingHandler_ServeHTTP(t *testing.T) {
 		h.ServeHTTP(httptest.NewRecorder(), r)
 
 		actual := buf.String()
-		if !strings.Contains(actual, test.ExpectedLogMessage) {
-			t.Errorf("Log message was\n%s\ninstead of matching \n%s", actual, test.ExpectedLogMessage)
-		}
+		assert.Equal(t, test.ExpectedLogMessage, actual)
 	}
 }

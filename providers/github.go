@@ -1,9 +1,9 @@
 package providers
 
 import (
-	"encoding/json"
+	"context"
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"path"
@@ -11,46 +11,75 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
-	"github.com/pusher/oauth2_proxy/pkg/logger"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/sessions"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/logger"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/requests"
 )
 
 // GitHubProvider represents an GitHub based Identity Provider
 type GitHubProvider struct {
 	*ProviderData
-	Org  string
-	Team string
+	Org   string
+	Team  string
+	Repo  string
+	Token string
+	Users []string
 }
+
+var _ Provider = (*GitHubProvider)(nil)
+
+const (
+	githubProviderName = "GitHub"
+	githubDefaultScope = "user:email"
+)
+
+var (
+	// Default Login URL for GitHub.
+	// Pre-parsed URL of https://github.org/login/oauth/authorize.
+	githubDefaultLoginURL = &url.URL{
+		Scheme: "https",
+		Host:   "github.com",
+		Path:   "/login/oauth/authorize",
+	}
+
+	// Default Redeem URL for GitHub.
+	// Pre-parsed URL of https://github.org/login/oauth/access_token.
+	githubDefaultRedeemURL = &url.URL{
+		Scheme: "https",
+		Host:   "github.com",
+		Path:   "/login/oauth/access_token",
+	}
+
+	// Default Validation URL for GitHub.
+	// ValidationURL is the API Base URL.
+	// Other API requests are based off of this (eg to fetch users/groups).
+	// Pre-parsed URL of https://api.github.com/.
+	githubDefaultValidateURL = &url.URL{
+		Scheme: "https",
+		Host:   "api.github.com",
+		Path:   "/",
+	}
+)
 
 // NewGitHubProvider initiates a new GitHubProvider
 func NewGitHubProvider(p *ProviderData) *GitHubProvider {
-	p.ProviderName = "GitHub"
-	if p.LoginURL == nil || p.LoginURL.String() == "" {
-		p.LoginURL = &url.URL{
-			Scheme: "https",
-			Host:   "github.com",
-			Path:   "/login/oauth/authorize",
-		}
-	}
-	if p.RedeemURL == nil || p.RedeemURL.String() == "" {
-		p.RedeemURL = &url.URL{
-			Scheme: "https",
-			Host:   "github.com",
-			Path:   "/login/oauth/access_token",
-		}
-	}
-	// ValidationURL is the API Base URL
-	if p.ValidateURL == nil || p.ValidateURL.String() == "" {
-		p.ValidateURL = &url.URL{
-			Scheme: "https",
-			Host:   "api.github.com",
-			Path:   "/",
-		}
-	}
-	if p.Scope == "" {
-		p.Scope = "user:email"
-	}
+	p.setProviderDefaults(providerDefaults{
+		name:        githubProviderName,
+		loginURL:    githubDefaultLoginURL,
+		redeemURL:   githubDefaultRedeemURL,
+		profileURL:  nil,
+		validateURL: githubDefaultValidateURL,
+		scope:       githubDefaultScope,
+	})
 	return &GitHubProvider{ProviderData: p}
+}
+
+func makeGitHubHeader(accessToken string) http.Header {
+	// extra headers required by the GitHub API when making authenticated requests
+	extraHeaders := map[string]string{
+		acceptHeader: "application/vnd.github.v3+json",
+	}
+	return makeAuthorizationHeader(tokenTypeToken, accessToken, extraHeaders)
 }
 
 // SetOrgTeam adds GitHub org reading parameters to the OAuth2 scope
@@ -62,7 +91,32 @@ func (p *GitHubProvider) SetOrgTeam(org, team string) {
 	}
 }
 
-func (p *GitHubProvider) hasOrg(accessToken string) (bool, error) {
+// SetRepo configures the target repository and optional token to use
+func (p *GitHubProvider) SetRepo(repo, token string) {
+	p.Repo = repo
+	p.Token = token
+}
+
+// SetUsers configures allowed usernames
+func (p *GitHubProvider) SetUsers(users []string) {
+	p.Users = users
+}
+
+// EnrichSessionState updates the User & Email after the initial Redeem
+func (p *GitHubProvider) EnrichSessionState(ctx context.Context, s *sessions.SessionState) error {
+	err := p.getEmail(ctx, s)
+	if err != nil {
+		return err
+	}
+	return p.getUser(ctx, s)
+}
+
+// ValidateSessionState validates the AccessToken
+func (p *GitHubProvider) ValidateSessionState(ctx context.Context, s *sessions.SessionState) bool {
+	return validateToken(ctx, p, s.AccessToken, makeGitHubHeader(s.AccessToken))
+}
+
+func (p *GitHubProvider) hasOrg(ctx context.Context, accessToken string) (bool, error) {
 	// https://developer.github.com/v3/orgs/#list-your-organizations
 
 	var orgs []struct {
@@ -86,28 +140,17 @@ func (p *GitHubProvider) hasOrg(accessToken string) (bool, error) {
 			Path:     path.Join(p.ValidateURL.Path, "/user/orgs"),
 			RawQuery: params.Encode(),
 		}
-		req, _ := http.NewRequest("GET", endpoint.String(), nil)
-		req.Header.Set("Accept", "application/vnd.github.v3+json")
-		req.Header.Set("Authorization", fmt.Sprintf("token %s", accessToken))
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return false, err
-		}
-
-		body, err := ioutil.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return false, err
-		}
-		if resp.StatusCode != 200 {
-			return false, fmt.Errorf(
-				"got %d from %q %s", resp.StatusCode, endpoint.String(), body)
-		}
 
 		var op orgsPage
-		if err := json.Unmarshal(body, &op); err != nil {
+		err := requests.New(endpoint.String()).
+			WithContext(ctx).
+			WithHeaders(makeGitHubHeader(accessToken)).
+			Do().
+			UnmarshalInto(&op)
+		if err != nil {
 			return false, err
 		}
+
 		if len(op) == 0 {
 			break
 		}
@@ -116,7 +159,7 @@ func (p *GitHubProvider) hasOrg(accessToken string) (bool, error) {
 		pn++
 	}
 
-	var presentOrgs []string
+	presentOrgs := make([]string, 0, len(orgs))
 	for _, org := range orgs {
 		if p.Org == org.Login {
 			logger.Printf("Found Github Organization: %q", org.Login)
@@ -129,7 +172,7 @@ func (p *GitHubProvider) hasOrg(accessToken string) (bool, error) {
 	return false, nil
 }
 
-func (p *GitHubProvider) hasOrgAndTeam(accessToken string) (bool, error) {
+func (p *GitHubProvider) hasOrgAndTeam(ctx context.Context, accessToken string) (bool, error) {
 	// https://developer.github.com/v3/orgs/teams/#list-user-teams
 
 	var teams []struct {
@@ -163,12 +206,15 @@ func (p *GitHubProvider) hasOrgAndTeam(accessToken string) (bool, error) {
 			RawQuery: params.Encode(),
 		}
 
-		req, _ := http.NewRequest("GET", endpoint.String(), nil)
-		req.Header.Set("Accept", "application/vnd.github.v3+json")
-		req.Header.Set("Authorization", fmt.Sprintf("token %s", accessToken))
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return false, err
+		// bodyclose cannot detect that the body is being closed later in requests.Into,
+		// so have to skip the linting for the next line.
+		// nolint:bodyclose
+		result := requests.New(endpoint.String()).
+			WithContext(ctx).
+			WithHeaders(makeGitHubHeader(accessToken)).
+			Do()
+		if result.Error() != nil {
+			return false, result.Error()
 		}
 
 		if last == 0 {
@@ -184,7 +230,7 @@ func (p *GitHubProvider) hasOrgAndTeam(accessToken string) (bool, error) {
 			// link header at last page (doesn't exist last info)
 			// <https://api.github.com/user/teams?page=3&per_page=10>; rel="prev", <https://api.github.com/user/teams?page=1&per_page=10>; rel="first"
 
-			link := resp.Header.Get("Link")
+			link := result.Headers().Get("Link")
 			rep1 := regexp.MustCompile(`(?s).*\<https://api.github.com/user/teams\?page=(.)&per_page=[0-9]+\>; rel="last".*`)
 			i, converr := strconv.Atoi(rep1.ReplaceAllString(link, "$1"))
 
@@ -194,21 +240,9 @@ func (p *GitHubProvider) hasOrgAndTeam(accessToken string) (bool, error) {
 			}
 		}
 
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			resp.Body.Close()
-			return false, err
-		}
-		resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			return false, fmt.Errorf(
-				"got %d from %q %s", resp.StatusCode, endpoint.String(), body)
-		}
-
 		var tp teamsPage
-		if err := json.Unmarshal(body, &tp); err != nil {
-			return false, fmt.Errorf("%s unmarshaling %s", err, body)
+		if err := result.UnmarshalInto(&tp); err != nil {
+			return false, err
 		}
 		if len(tp) == 0 {
 			break
@@ -255,67 +289,43 @@ func (p *GitHubProvider) hasOrgAndTeam(accessToken string) (bool, error) {
 	return false, nil
 }
 
-// GetEmailAddress returns the Account email address
-func (p *GitHubProvider) GetEmailAddress(s *sessions.SessionState) (string, error) {
+func (p *GitHubProvider) hasRepo(ctx context.Context, accessToken string) (bool, error) {
+	// https://developer.github.com/v3/repos/#get-a-repository
 
-	var emails []struct {
-		Email    string `json:"email"`
-		Primary  bool   `json:"primary"`
-		Verified bool   `json:"verified"`
+	type permissions struct {
+		Pull bool `json:"pull"`
+		Push bool `json:"push"`
 	}
 
-	// if we require an Org or Team, check that first
-	if p.Org != "" {
-		if p.Team != "" {
-			if ok, err := p.hasOrgAndTeam(s.AccessToken); err != nil || !ok {
-				return "", err
-			}
-		} else {
-			if ok, err := p.hasOrg(s.AccessToken); err != nil || !ok {
-				return "", err
-			}
-		}
+	type repository struct {
+		Permissions permissions `json:"permissions"`
+		Private     bool        `json:"private"`
 	}
 
 	endpoint := &url.URL{
 		Scheme: p.ValidateURL.Scheme,
 		Host:   p.ValidateURL.Host,
-		Path:   path.Join(p.ValidateURL.Path, "/user/emails"),
+		Path:   path.Join(p.ValidateURL.Path, "/repo/", p.Repo),
 	}
-	req, _ := http.NewRequest("GET", endpoint.String(), nil)
-	req.Header.Set("Authorization", fmt.Sprintf("token %s", s.AccessToken))
-	resp, err := http.DefaultClient.Do(req)
+
+	var repo repository
+	err := requests.New(endpoint.String()).
+		WithContext(ctx).
+		WithHeaders(makeGitHubHeader(accessToken)).
+		Do().
+		UnmarshalInto(&repo)
 	if err != nil {
-		return "", err
-	}
-	body, err := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		return "", err
+		return false, err
 	}
 
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("got %d from %q %s",
-			resp.StatusCode, endpoint.String(), body)
-	}
-
-	logger.Printf("got %d from %q %s", resp.StatusCode, endpoint.String(), body)
-
-	if err := json.Unmarshal(body, &emails); err != nil {
-		return "", fmt.Errorf("%s unmarshaling %s", err, body)
-	}
-
-	for _, email := range emails {
-		if email.Primary && email.Verified {
-			return email.Email, nil
-		}
-	}
-
-	return "", nil
+	// Every user can implicitly pull from a public repo, so only grant access
+	// if they have push access or the repo is private and they can pull
+	return repo.Permissions.Push || (repo.Private && repo.Permissions.Pull), nil
 }
 
-// GetUserName returns the Account user name
-func (p *GitHubProvider) GetUserName(s *sessions.SessionState) (string, error) {
+func (p *GitHubProvider) hasUser(ctx context.Context, accessToken string) (bool, error) {
+	// https://developer.github.com/v3/users/#get-the-authenticated-user
+
 	var user struct {
 		Login string `json:"login"`
 		Email string `json:"email"`
@@ -327,33 +337,153 @@ func (p *GitHubProvider) GetUserName(s *sessions.SessionState) (string, error) {
 		Path:   path.Join(p.ValidateURL.Path, "/user"),
 	}
 
-	req, err := http.NewRequest("GET", endpoint.String(), nil)
+	err := requests.New(endpoint.String()).
+		WithContext(ctx).
+		WithHeaders(makeGitHubHeader(accessToken)).
+		Do().
+		UnmarshalInto(&user)
 	if err != nil {
-		return "", fmt.Errorf("could not create new GET request: %v", err)
+		return false, err
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("token %s", s.AccessToken))
-	resp, err := http.DefaultClient.Do(req)
+	if p.isVerifiedUser(user.Login) {
+		return true, nil
+	}
+	return false, nil
+}
+
+func (p *GitHubProvider) isCollaborator(ctx context.Context, username, accessToken string) (bool, error) {
+	//https://developer.github.com/v3/repos/collaborators/#check-if-a-user-is-a-collaborator
+
+	endpoint := &url.URL{
+		Scheme: p.ValidateURL.Scheme,
+		Host:   p.ValidateURL.Host,
+		Path:   path.Join(p.ValidateURL.Path, "/repos/", p.Repo, "/collaborators/", username),
+	}
+	result := requests.New(endpoint.String()).
+		WithContext(ctx).
+		WithHeaders(makeGitHubHeader(accessToken)).
+		Do()
+	if result.Error() != nil {
+		return false, result.Error()
+	}
+
+	if result.StatusCode() != 204 {
+		return false, fmt.Errorf("got %d from %q %s",
+			result.StatusCode(), endpoint.String(), result.Body())
+	}
+
+	logger.Printf("got %d from %q %s", result.StatusCode(), endpoint.String(), result.Body())
+
+	return true, nil
+}
+
+// getEmail updates the SessionState Email
+func (p *GitHubProvider) getEmail(ctx context.Context, s *sessions.SessionState) error {
+
+	var emails []struct {
+		Email    string `json:"email"`
+		Primary  bool   `json:"primary"`
+		Verified bool   `json:"verified"`
+	}
+
+	// If usernames are set, check that first
+	verifiedUser := false
+	if len(p.Users) > 0 {
+		var err error
+		verifiedUser, err = p.hasUser(ctx, s.AccessToken)
+		if err != nil {
+			return err
+		}
+		// org and repository options are not configured
+		if !verifiedUser && p.Org == "" && p.Repo == "" {
+			return errors.New("missing github user")
+		}
+	}
+	// If a user is verified by username options, skip the following restrictions
+	if !verifiedUser {
+		if p.Org != "" {
+			if p.Team != "" {
+				if ok, err := p.hasOrgAndTeam(ctx, s.AccessToken); err != nil || !ok {
+					return err
+				}
+			} else {
+				if ok, err := p.hasOrg(ctx, s.AccessToken); err != nil || !ok {
+					return err
+				}
+			}
+		} else if p.Repo != "" && p.Token == "" { // If we have a token we'll do the collaborator check in GetUserName
+			if ok, err := p.hasRepo(ctx, s.AccessToken); err != nil || !ok {
+				return err
+			}
+		}
+	}
+
+	endpoint := &url.URL{
+		Scheme: p.ValidateURL.Scheme,
+		Host:   p.ValidateURL.Host,
+		Path:   path.Join(p.ValidateURL.Path, "/user/emails"),
+	}
+	err := requests.New(endpoint.String()).
+		WithContext(ctx).
+		WithHeaders(makeGitHubHeader(s.AccessToken)).
+		Do().
+		UnmarshalInto(&emails)
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
-	defer resp.Body.Close()
+	for _, email := range emails {
+		if email.Verified {
+			if email.Primary {
+				s.Email = email.Email
+				return nil
+			}
+		}
+	}
+
+	return nil
+}
+
+// getUser updates the SessionState User
+func (p *GitHubProvider) getUser(ctx context.Context, s *sessions.SessionState) error {
+	var user struct {
+		Login string `json:"login"`
+		Email string `json:"email"`
+	}
+
+	endpoint := &url.URL{
+		Scheme: p.ValidateURL.Scheme,
+		Host:   p.ValidateURL.Host,
+		Path:   path.Join(p.ValidateURL.Path, "/user"),
+	}
+
+	err := requests.New(endpoint.String()).
+		WithContext(ctx).
+		WithHeaders(makeGitHubHeader(s.AccessToken)).
+		Do().
+		UnmarshalInto(&user)
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("got %d from %q %s",
-			resp.StatusCode, endpoint.String(), body)
+	// Now that we have the username we can check collaborator status
+	if !p.isVerifiedUser(user.Login) && p.Org == "" && p.Repo != "" && p.Token != "" {
+		if ok, err := p.isCollaborator(ctx, user.Login, p.Token); err != nil || !ok {
+			return err
+		}
 	}
 
-	logger.Printf("got %d from %q %s", resp.StatusCode, endpoint.String(), body)
+	s.User = user.Login
+	return nil
+}
 
-	if err := json.Unmarshal(body, &user); err != nil {
-		return "", fmt.Errorf("%s unmarshaling %s", err, body)
+// isVerifiedUser
+func (p *GitHubProvider) isVerifiedUser(username string) bool {
+	for _, u := range p.Users {
+		if username == u {
+			return true
+		}
 	}
-
-	return user.Login, nil
+	return false
 }

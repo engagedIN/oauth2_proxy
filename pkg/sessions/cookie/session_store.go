@@ -8,17 +8,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pusher/oauth2_proxy/pkg/apis/options"
-	"github.com/pusher/oauth2_proxy/pkg/apis/sessions"
-	"github.com/pusher/oauth2_proxy/pkg/cookies"
-	"github.com/pusher/oauth2_proxy/pkg/encryption"
-	"github.com/pusher/oauth2_proxy/pkg/sessions/utils"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/options"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/sessions"
+	pkgcookies "github.com/oauth2-proxy/oauth2-proxy/v7/pkg/cookies"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/encryption"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/logger"
 )
 
 const (
-	// Cookies are limited to 4kb including the length of the cookie name,
-	// the cookie name can be up to 256 bytes
-	maxCookieLength = 3840
+	// Cookies are limited to 4kb for all parts
+	// including the cookie name, value, attributes; IE (http.cookie).String()
+	// Most browsers' max is 4096 -- but we give ourselves some leeway
+	maxCookieLength = 4000
 )
 
 // Ensure CookieSessionStore implements the interface
@@ -27,38 +28,39 @@ var _ sessions.SessionStore = &SessionStore{}
 // SessionStore is an implementation of the sessions.SessionStore
 // interface that stores sessions in client side cookies
 type SessionStore struct {
-	CookieOptions *options.CookieOptions
-	CookieCipher  *encryption.Cipher
+	Cookie       *options.Cookie
+	CookieCipher encryption.Cipher
+	Minimal      bool
 }
 
 // Save takes a sessions.SessionState and stores the information from it
 // within Cookies set on the HTTP response writer
 func (s *SessionStore) Save(rw http.ResponseWriter, req *http.Request, ss *sessions.SessionState) error {
-	if ss.CreatedAt.IsZero() {
-		ss.CreatedAt = time.Now()
+	if ss.CreatedAt == nil || ss.CreatedAt.IsZero() {
+		now := time.Now()
+		ss.CreatedAt = &now
 	}
-	value, err := utils.CookieForSession(ss, s.CookieCipher)
+	value, err := s.cookieForSession(ss)
 	if err != nil {
 		return err
 	}
-	s.setSessionCookie(rw, req, value, ss.CreatedAt)
-	return nil
+	return s.setSessionCookie(rw, req, value, *ss.CreatedAt)
 }
 
 // Load reads sessions.SessionState information from Cookies within the
 // HTTP request object
 func (s *SessionStore) Load(req *http.Request) (*sessions.SessionState, error) {
-	c, err := loadCookie(req, s.CookieOptions.CookieName)
+	c, err := loadCookie(req, s.Cookie.Name)
 	if err != nil {
 		// always http.ErrNoCookie
-		return nil, fmt.Errorf("Cookie %q not present", s.CookieOptions.CookieName)
+		return nil, fmt.Errorf("cookie %q not present", s.Cookie.Name)
 	}
-	val, _, ok := encryption.Validate(c, s.CookieOptions.CookieSecret, s.CookieOptions.CookieExpire)
+	val, _, ok := encryption.Validate(c, s.Cookie.Secret, s.Cookie.Expire)
 	if !ok {
-		return nil, errors.New("Cookie Signature not valid")
+		return nil, errors.New("cookie signature not valid")
 	}
 
-	session, err := utils.SessionFromCookie(val, s.CookieCipher)
+	session, err := sessionFromCookie(val, s.CookieCipher)
 	if err != nil {
 		return nil, err
 	}
@@ -68,49 +70,84 @@ func (s *SessionStore) Load(req *http.Request) (*sessions.SessionState, error) {
 // Clear clears any saved session information by writing a cookie to
 // clear the session
 func (s *SessionStore) Clear(rw http.ResponseWriter, req *http.Request) error {
-	var cookies []*http.Cookie
-
 	// matches CookieName, CookieName_<number>
-	var cookieNameRegex = regexp.MustCompile(fmt.Sprintf("^%s(_\\d+)?$", s.CookieOptions.CookieName))
+	var cookieNameRegex = regexp.MustCompile(fmt.Sprintf("^%s(_\\d+)?$", s.Cookie.Name))
 
 	for _, c := range req.Cookies() {
 		if cookieNameRegex.MatchString(c.Name) {
 			clearCookie := s.makeCookie(req, c.Name, "", time.Hour*-1, time.Now())
 
 			http.SetCookie(rw, clearCookie)
-			cookies = append(cookies, clearCookie)
 		}
 	}
 
 	return nil
 }
 
+// cookieForSession serializes a session state for storage in a cookie
+func (s *SessionStore) cookieForSession(ss *sessions.SessionState) ([]byte, error) {
+	if s.Minimal && (ss.AccessToken != "" || ss.IDToken != "" || ss.RefreshToken != "") {
+		minimal := *ss
+		minimal.AccessToken = ""
+		minimal.IDToken = ""
+		minimal.RefreshToken = ""
+
+		return minimal.EncodeSessionState(s.CookieCipher, true)
+	}
+
+	return ss.EncodeSessionState(s.CookieCipher, true)
+}
+
+// sessionFromCookie deserializes a session from a cookie value
+func sessionFromCookie(v []byte, c encryption.Cipher) (s *sessions.SessionState, err error) {
+	ss, err := sessions.DecodeSessionState(v, c, true)
+	// If anything fails (Decrypt, LZ4, MessagePack), try legacy JSON decode
+	// LZ4 will likely fail for wrong header after AES-CFB spits out garbage
+	// data from trying to decrypt JSON it things is ciphertext
+	if err != nil {
+		// Legacy used Base64 + AES CFB
+		legacyCipher := encryption.NewBase64Cipher(c)
+		return sessions.LegacyV5DecodeSessionState(string(v), legacyCipher)
+	}
+	return ss, nil
+}
+
 // setSessionCookie adds the user's session cookie to the response
-func (s *SessionStore) setSessionCookie(rw http.ResponseWriter, req *http.Request, val string, created time.Time) {
-	for _, c := range s.makeSessionCookie(req, val, created) {
+func (s *SessionStore) setSessionCookie(rw http.ResponseWriter, req *http.Request, val []byte, created time.Time) error {
+	cookies, err := s.makeSessionCookie(req, val, created)
+	if err != nil {
+		return err
+	}
+	for _, c := range cookies {
 		http.SetCookie(rw, c)
 	}
+	return nil
 }
 
 // makeSessionCookie creates an http.Cookie containing the authenticated user's
 // authentication details
-func (s *SessionStore) makeSessionCookie(req *http.Request, value string, now time.Time) []*http.Cookie {
-	if value != "" {
-		value = encryption.SignedValue(s.CookieOptions.CookieSecret, s.CookieOptions.CookieName, value, now)
+func (s *SessionStore) makeSessionCookie(req *http.Request, value []byte, now time.Time) ([]*http.Cookie, error) {
+	strValue := string(value)
+	if strValue != "" {
+		var err error
+		strValue, err = encryption.SignedValue(s.Cookie.Secret, s.Cookie.Name, value, now)
+		if err != nil {
+			return nil, err
+		}
 	}
-	c := s.makeCookie(req, s.CookieOptions.CookieName, value, s.CookieOptions.CookieExpire, now)
-	if len(c.Value) > 4096-len(s.CookieOptions.CookieName) {
-		return splitCookie(c)
+	c := s.makeCookie(req, s.Cookie.Name, strValue, s.Cookie.Expire, now)
+	if len(c.String()) > maxCookieLength {
+		return splitCookie(c), nil
 	}
-	return []*http.Cookie{c}
+	return []*http.Cookie{c}, nil
 }
 
 func (s *SessionStore) makeCookie(req *http.Request, name string, value string, expiration time.Duration, now time.Time) *http.Cookie {
-	return cookies.MakeCookieFromOptions(
+	return pkgcookies.MakeCookieFromOptions(
 		req,
 		name,
 		value,
-		s.CookieOptions,
+		s.Cookie,
 		expiration,
 		now,
 	)
@@ -118,10 +155,16 @@ func (s *SessionStore) makeCookie(req *http.Request, name string, value string, 
 
 // NewCookieSessionStore initialises a new instance of the SessionStore from
 // the configuration given
-func NewCookieSessionStore(opts *options.SessionOptions, cookieOpts *options.CookieOptions) (sessions.SessionStore, error) {
+func NewCookieSessionStore(opts *options.SessionOptions, cookieOpts *options.Cookie) (sessions.SessionStore, error) {
+	cipher, err := encryption.NewCFBCipher(encryption.SecretBytes(cookieOpts.Secret))
+	if err != nil {
+		return nil, fmt.Errorf("error initialising cipher: %v", err)
+	}
+
 	return &SessionStore{
-		CookieCipher:  opts.Cipher,
-		CookieOptions: cookieOpts,
+		CookieCipher: cipher,
+		Cookie:       cookieOpts,
+		Minimal:      opts.Cookie.Minimal,
 	}, nil
 }
 
@@ -129,27 +172,44 @@ func NewCookieSessionStore(opts *options.SessionOptions, cookieOpts *options.Coo
 // it into a slice of cookies which fit within the 4kb cookie limit indexing
 // the cookies from 0
 func splitCookie(c *http.Cookie) []*http.Cookie {
-	if len(c.Value) < maxCookieLength {
+	if len(c.String()) < maxCookieLength {
 		return []*http.Cookie{c}
 	}
+
+	logger.Errorf("WARNING: Multiple cookies are required for this session as it exceeds the 4kb cookie limit. Please use server side session storage (eg. Redis) instead.")
+
 	cookies := []*http.Cookie{}
 	valueBytes := []byte(c.Value)
 	count := 0
 	for len(valueBytes) > 0 {
 		newCookie := copyCookie(c)
-		newCookie.Name = fmt.Sprintf("%s_%d", c.Name, count)
+		newCookie.Name = splitCookieName(c.Name, count)
 		count++
-		if len(valueBytes) < maxCookieLength {
-			newCookie.Value = string(valueBytes)
+
+		newCookie.Value = string(valueBytes)
+		cookieLength := len(newCookie.String())
+		if cookieLength <= maxCookieLength {
 			valueBytes = []byte{}
 		} else {
-			newValue := valueBytes[:maxCookieLength]
-			valueBytes = valueBytes[maxCookieLength:]
+			overflow := cookieLength - maxCookieLength
+			valueSize := len(valueBytes) - overflow
+
+			newValue := valueBytes[:valueSize]
+			valueBytes = valueBytes[valueSize:]
 			newCookie.Value = string(newValue)
 		}
 		cookies = append(cookies, newCookie)
 	}
 	return cookies
+}
+
+func splitCookieName(name string, count int) string {
+	splitName := fmt.Sprintf("%s_%d", name, count)
+	overflow := len(splitName) - 256
+	if overflow > 0 {
+		splitName = fmt.Sprintf("%s_%d", name[:len(name)-overflow], count)
+	}
+	return splitName
 }
 
 // loadCookie retreieves the sessions state cookie from the http request.
@@ -165,14 +225,14 @@ func loadCookie(req *http.Request, cookieName string) (*http.Cookie, error) {
 	count := 0
 	for err == nil {
 		var c *http.Cookie
-		c, err = req.Cookie(fmt.Sprintf("%s_%d", cookieName, count))
+		c, err = req.Cookie(splitCookieName(cookieName, count))
 		if err == nil {
 			cookies = append(cookies, c)
 			count++
 		}
 	}
 	if len(cookies) == 0 {
-		return nil, fmt.Errorf("Could not find cookie %s", cookieName)
+		return nil, fmt.Errorf("could not find cookie %s", cookieName)
 	}
 	return joinCookies(cookies)
 }
@@ -207,5 +267,6 @@ func copyCookie(c *http.Cookie) *http.Cookie {
 		HttpOnly:   c.HttpOnly,
 		Raw:        c.Raw,
 		Unparsed:   c.Unparsed,
+		SameSite:   c.SameSite,
 	}
 }
